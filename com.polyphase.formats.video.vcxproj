@@ -56,15 +56,15 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>OCTAVE_PLUGIN_EXPORT;EDITOR=1;LUA_ENABLED=1;GLM_FORCE_RADIANS;PLATFORM_LINUX=1;API_VULKAN=1;COMPOLYPHASEFORMATSVIDEO_EXPORTS;_DEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>OCTAVE_PLUGIN_EXPORT;EDITOR=1;LUA_ENABLED=1;GLM_FORCE_RADIANS;PLATFORM_WINDOWS=1;API_VULKAN=1;NOMINMAX;COMPOLYPHASEFORMATSVIDEO_EXPORTS;_DEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>\home\uai\Projects\Octave\Polyphase-Engine\Engine\Source;\home\uai\Projects\Octave\Polyphase-Engine\Engine\Source\Engine;\home\uai\Projects\Octave\Polyphase-Engine\Engine\Source\Plugins;\home\uai\Projects\Octave\Polyphase-Engine\External\Lua;\home\uai\Projects\Octave\Polyphase-Engine\External\glm;\home\uai\Projects\Octave\Polyphase-Engine\External\Imgui;\home\uai\Projects\Octave\Polyphase-Engine\External\ImGuizmo;\home\uai\Projects\Octave\Polyphase-Engine\External\bullet3\src;\home\uai\Projects\Octave\Polyphase-Engine\External\Assimp;\home\uai\Projects\Octave\Polyphase-Engine\External;$(VULKAN_SDK)\Include;$(ProjectDir)Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Engine\Source;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Engine\Source\Engine;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Engine\Source\Plugins;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\Lua;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\glm;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\Imgui;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\ImGuizmo;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\bullet3\src;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\Assimp;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External;$(VULKAN_SDK)\Include;$(ProjectDir)Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>\home\uai\Projects\Octave\Polyphase-Engine\Standalone\Build\Linux\;\home\uai\Projects\Octave\Polyphase-Engine\Standalone\Build\Linux\lib\;\home\uai\Projects\Octave\Polyphase-Engine\\Standalone\Build\Windows\x64\DebugEditor\;\home\uai\Projects\Octave\Polyphase-Engine\\External\Lua\Build\Windows\x64\DebugEditor\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Standalone\Build\Windows\x64\DebugEditor\;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Standalone\Build\Windows\x64\DebugEditor\lib\;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\\Standalone\Build\Windows\x64\DebugEditor\;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\\External\Lua\Build\Windows\x64\DebugEditor\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>Polyphase.lib;Lua.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
@@ -74,38 +74,38 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>OCTAVE_PLUGIN_EXPORT;EDITOR=1;LUA_ENABLED=1;GLM_FORCE_RADIANS;PLATFORM_LINUX=1;API_VULKAN=1;COMPOLYPHASEFORMATSVIDEO_EXPORTS;NDEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>OCTAVE_PLUGIN_EXPORT;EDITOR=1;LUA_ENABLED=1;GLM_FORCE_RADIANS;PLATFORM_WINDOWS=1;API_VULKAN=1;NOMINMAX;COMPOLYPHASEFORMATSVIDEO_EXPORTS;NDEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>\home\uai\Projects\Octave\Polyphase-Engine\Engine\Source;\home\uai\Projects\Octave\Polyphase-Engine\Engine\Source\Engine;\home\uai\Projects\Octave\Polyphase-Engine\Engine\Source\Plugins;\home\uai\Projects\Octave\Polyphase-Engine\External\Lua;\home\uai\Projects\Octave\Polyphase-Engine\External\glm;\home\uai\Projects\Octave\Polyphase-Engine\External\Imgui;\home\uai\Projects\Octave\Polyphase-Engine\External\ImGuizmo;\home\uai\Projects\Octave\Polyphase-Engine\External\bullet3\src;\home\uai\Projects\Octave\Polyphase-Engine\External\Assimp;\home\uai\Projects\Octave\Polyphase-Engine\External;$(VULKAN_SDK)\Include;$(ProjectDir)Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Engine\Source;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Engine\Source\Engine;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Engine\Source\Plugins;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\Lua;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\glm;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\Imgui;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\ImGuizmo;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\bullet3\src;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\Assimp;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External;$(VULKAN_SDK)\Include;$(ProjectDir)Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>\home\uai\Projects\Octave\Polyphase-Engine\Standalone\Build\Linux\;\home\uai\Projects\Octave\Polyphase-Engine\Standalone\Build\Linux\lib\;\home\uai\Projects\Octave\Polyphase-Engine\\Standalone\Build\Windows\x64\ReleaseEditor\;\home\uai\Projects\Octave\Polyphase-Engine\\External\Lua\Build\Windows\x64\ReleaseEditor\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Standalone\Build\Windows\x64\DebugEditor\;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Standalone\Build\Windows\x64\DebugEditor\lib\;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\\Standalone\Build\Windows\x64\ReleaseEditor\;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\\External\Lua\Build\Windows\x64\ReleaseEditor\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>Polyphase.lib;Lua.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="Source\VideoPlayer.cpp" />
+    <ClCompile Include="Source\Backends\AsyncMediaPump.cpp" />
+    <ClInclude Include="Source\Backends\AsyncMediaPump.h" />
+    <ClCompile Include="Source\Backends\FFmpegVideoDecoder.cpp" />
+    <ClInclude Include="Source\Backends\FFmpegVideoDecoder.h" />
+    <ClInclude Include="Source\Backends\IVideoDecoder.h" />
+    <ClCompile Include="Source\Backends\NullVideoDecoder.cpp" />
+    <ClInclude Include="Source\Backends\NullVideoDecoder.h" />
+    <ClCompile Include="Source\Backends\VideoDecoderFactory.cpp" />
+    <ClInclude Include="Source\Backends\VideoDecoderFactory.h" />
+    <ClInclude Include="Source\EngineAPIAccess.h" />
+    <ClCompile Include="Source\Lua\VideoPlayer3D_Lua.cpp" />
+    <ClInclude Include="Source\Lua\VideoPlayer3D_Lua.h" />
     <ClCompile Include="Source\Nodes\VideoPlayer3D.cpp" />
     <ClInclude Include="Source\Nodes\VideoPlayer3D.h" />
     <ClCompile Include="Source\Util\AlphaUnpack.cpp" />
     <ClInclude Include="Source\Util\AlphaUnpack.h" />
-    <ClInclude Include="Source\Lua\VideoPlayer3D_Lua.h" />
-    <ClCompile Include="Source\Lua\VideoPlayer3D_Lua.cpp" />
-    <ClInclude Include="Source\EngineAPIAccess.h" />
-    <ClInclude Include="Source\Backends\NullVideoDecoder.h" />
-    <ClInclude Include="Source\Backends\AsyncMediaPump.h" />
-    <ClCompile Include="Source\Backends\FFmpegVideoDecoder.cpp" />
-    <ClCompile Include="Source\Backends\VideoDecoderFactory.cpp" />
-    <ClInclude Include="Source\Backends\VideoDecoderFactory.h" />
-    <ClCompile Include="Source\Backends\AsyncMediaPump.cpp" />
-    <ClInclude Include="Source\Backends\FFmpegVideoDecoder.h" />
-    <ClCompile Include="Source\Backends\NullVideoDecoder.cpp" />
-    <ClInclude Include="Source\Backends\IVideoDecoder.h" />
+    <ClCompile Include="Source\VideoPlayer.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

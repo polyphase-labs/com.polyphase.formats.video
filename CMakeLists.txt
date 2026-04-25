@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Polyphase Engine path
-set(POLYPHASE_PATH "/home/uai/Projects/Octave/Polyphase-Engine/")
+set(POLYPHASE_PATH "M:/Projects/Polyphase/Polyphase/CODE/mergePolyphase/polyphase-engine/")
 
 # Gather source files
 file(GLOB_RECURSE SOURCES "Source/*.cpp" "Source/*.c")
@@ -50,8 +50,9 @@ target_compile_definitions(com.polyphase.formats.video PRIVATE
     EDITOR=1
     LUA_ENABLED=1
     GLM_FORCE_RADIANS
-    PLATFORM_LINUX=1
+    PLATFORM_WINDOWS=1
     API_VULKAN=1
+    NOMINMAX
     COMPOLYPHASEFORMATSVIDEO_EXPORTS
 )
 

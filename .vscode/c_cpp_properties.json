@@ -4,30 +4,31 @@
             "name": "Polyphase Addon",
             "includePath": [
                 "${workspaceFolder}/**",
-                "/home/uai/Projects/Octave/Polyphase-Engine/Engine/Source",
-                "/home/uai/Projects/Octave/Polyphase-Engine/Engine/Source/Engine",
-                "/home/uai/Projects/Octave/Polyphase-Engine/Engine/Source/Plugins",
-                "/home/uai/Projects/Octave/Polyphase-Engine/External/Lua",
-                "/home/uai/Projects/Octave/Polyphase-Engine/External/glm",
-                "/home/uai/Projects/Octave/Polyphase-Engine/External/Imgui",
-                "/home/uai/Projects/Octave/Polyphase-Engine/External/ImGuizmo",
-                "/home/uai/Projects/Octave/Polyphase-Engine/External/bullet3/src",
-                "/home/uai/Projects/Octave/Polyphase-Engine/External/Assimp",
-                "/home/uai/Projects/Octave/Polyphase-Engine/External",
-                "${env:VULKAN_SDK}/include"
+                "M:/Projects/Polyphase/Polyphase/CODE/mergePolyphase/polyphase-engine/Engine/Source",
+                "M:/Projects/Polyphase/Polyphase/CODE/mergePolyphase/polyphase-engine/Engine/Source/Engine",
+                "M:/Projects/Polyphase/Polyphase/CODE/mergePolyphase/polyphase-engine/Engine/Source/Plugins",
+                "M:/Projects/Polyphase/Polyphase/CODE/mergePolyphase/polyphase-engine/External/Lua",
+                "M:/Projects/Polyphase/Polyphase/CODE/mergePolyphase/polyphase-engine/External/glm",
+                "M:/Projects/Polyphase/Polyphase/CODE/mergePolyphase/polyphase-engine/External/Imgui",
+                "M:/Projects/Polyphase/Polyphase/CODE/mergePolyphase/polyphase-engine/External/ImGuizmo",
+                "M:/Projects/Polyphase/Polyphase/CODE/mergePolyphase/polyphase-engine/External/bullet3/src",
+                "M:/Projects/Polyphase/Polyphase/CODE/mergePolyphase/polyphase-engine/External/Assimp",
+                "M:/Projects/Polyphase/Polyphase/CODE/mergePolyphase/polyphase-engine/External",
+                "${env:VULKAN_SDK}/Include"
             ],
             "defines": [
                 "OCTAVE_PLUGIN_EXPORT",
                 "EDITOR=1",
                 "LUA_ENABLED=1",
                 "GLM_FORCE_RADIANS",
-                "PLATFORM_LINUX=1",
+                "PLATFORM_WINDOWS=1",
                 "API_VULKAN=1",
+                "NOMINMAX",
                 "COMPOLYPHASEFORMATSVIDEO_EXPORTS"
             ],
             "cStandard": "c17",
             "cppStandard": "c++17",
-            "intelliSenseMode": "linux-gcc-x64"
+            "intelliSenseMode": "windows-msvc-x64"
         }
     ],
     "version": 4
