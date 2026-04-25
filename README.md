@@ -79,41 +79,40 @@ owns the change.
 
 ### Linux (x64)
 
-Status today: video decodes and renders; **audio is silent** (engine streaming
-audio is a stub on Linux); native addon **hot-reload** in the editor will leak
-factories on unload.
+Status today: video, audio, and native-addon hot-reload all work via the
+PulseAudio streaming backend and the dlopen-based factory strip. Build the
+engine + addon with the standard CMake flow; PulseAudio and FFmpeg are picked
+up via pkg-config.
 
-1. **[engine] Implement `StripFactoriesFromModule` for Linux** in
-   `Engine/Source/Editor/Addons/NativeAddonManager.cpp`. Use
-   `dlinfo(handle, RTLD_DI_LINKMAP, &lm)` to obtain the loaded module's base
-   address, then walk each factory list (`Node::GetFactoryList`,
-   `Asset::GetFactoryList`, `GraphNode`, `TimelineClip`, `TimelineTrack`) and call
-   `dladdr((void*)factory, &info)` on every entry — drop those whose
-   `info.dli_fbase` matches the unloaded module's base. This mirrors the Windows
-   path that uses `GetModuleInformation` + `lpBaseOfDll`. Prior art for `dladdr`
-   already exists in `External/bullet3/.../pathtools.cpp`.
+Reference for what landed (each item below is now in-tree, kept here as a map):
 
-2. **[engine] Implement streaming audio in `Audio/Linux/Audio_Linux.cpp`**:
-   `AUD_OpenStream`, `AUD_CloseStream`, `AUD_SubmitStreamBuffer`,
-   `AUD_GetStreamPlayedSamples`, `AUD_SetStreamVolume`, `AUD_SetStreamPaused`.
-   Recommended backend is **PulseAudio** (`pa_simple` API) for the first pass —
-   a `pa_stream` per opened video, fed from a worker thread that drains the
-   `mAudioQueue`. ALSA-direct is leaner but each distro's mixer config differs,
-   so PulseAudio is the safer default. `GetStreamPlayedSamples` reads the stream
-   timing info via `pa_stream_get_time` and converts to sample count. Without
-   this the addon's audio-as-master sync degrades to wall-clock automatically.
+1. **[engine] `StripFactoriesFromModule` for Linux** —
+   `Engine/Source/Editor/Addons/NativeAddonManager.cpp`. Uses
+   `dlinfo(handle, RTLD_DI_LINKMAP, &lm)` to get the loaded module's base, then
+   `dladdr((void*)factory, &info)` per entry; drops factories whose
+   `info.dli_fbase` matches the unloaded module's base. Mirrors the Windows
+   `GetModuleInformation` + `lpBaseOfDll` range check.
 
-3. **[addon] Bundle/locate FFmpeg**: prefer the system package
-   (`apt install libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev`)
-   and let CMake `find_package(PkgConfig)` + `pkg_check_modules(AVCODEC libavcodec)`
-   resolve include/lib paths instead of the `External/ffmpeg/` dir layout used on
-   Windows. Add an `if(UNIX)` branch in `CMakeLists.txt`. Distros that ship
-   FFmpeg < 4.0 are too old for `swr_alloc_set_opts2` — document the version floor
-   in the README (FFmpeg 5.x recommended).
+2. **[engine] Streaming audio in `Audio/Linux/Audio_Linux.cpp`** — PulseAudio
+   async API (`pa_threaded_mainloop` + one `pa_stream` per voice).
+   `AUD_OpenStream` lazily inits the context so headless / pulse-less systems
+   degrade to silent video. `AUD_GetStreamPlayedSamples` reads
+   `pa_stream_get_time`, falling back to a submitted-sample counter before the
+   first sample plays out so the audio-as-master sync doesn't wedge at zero.
+   `libpulse` is pulled in via `pkg_check_modules` in `Engine/Source/CMakeLists.txt`.
 
-4. **[addon] Verify hot-reload after #1** — open a video, edit `VideoPlayer3D.cpp`,
-   trigger Refresh Native Addons, confirm no duplicate factory crash and the next
-   `Play()` works.
+3. **[engine] EngineEditor symbol export** —
+   `Standalone/CMakeLists.txt` sets `ENABLE_EXPORTS` so addon `.so`s loaded via
+   dlopen can resolve engine symbols against the executable.
+
+4. **[addon] FFmpeg via system pkg-config** — `CMakeLists.txt` `elseif(UNIX)`
+   branch. Install on Debian/Ubuntu:
+   `apt install libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev`.
+   FFmpeg 4.0 is the minimum (`swr_alloc_set_opts2`); 5.x recommended.
+
+5. **[addon] Verify hot-reload** — open a video, edit `VideoPlayer3D.cpp`,
+   trigger Refresh Native Addons, confirm no duplicate factory crash and the
+   next `Play()` works.
 
 ### Android (arm64-v8a)
 
