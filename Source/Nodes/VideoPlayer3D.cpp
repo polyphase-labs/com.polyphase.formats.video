@@ -73,6 +73,11 @@ VideoPlayer3D::VideoPlayer3D()
 VideoPlayer3D::~VideoPlayer3D()
 {
     CloseVideo();
+    if (mTexture != nullptr)
+    {
+        delete mTexture;
+        mTexture = nullptr;
+    }
 }
 
 const char* VideoPlayer3D::GetTypeName() const
@@ -105,6 +110,11 @@ void VideoPlayer3D::Create()
 void VideoPlayer3D::Destroy()
 {
     CloseVideo();
+    if (mTexture != nullptr)
+    {
+        delete mTexture;
+        mTexture = nullptr;
+    }
     Node3D::Destroy();
 }
 
@@ -275,7 +285,11 @@ void VideoPlayer3D::Tick(float deltaTime)
     }
 
     // EOS is flagged by the worker after the final frame; present-side catches up here.
-    if (mPump->IsEndOfStream() && mPlayheadSec >= mNextFrameSec)
+    // Hold for a full frame period past the last frame's PTS so it gets the same on-screen
+    // lifetime as every other frame — otherwise the loop fires the instant the last frame
+    // is popped and it visibly flashes by in ~1 tick instead of ~1/fps.
+    const double finalFrameHold = (mFrameRate > 0.0) ? (1.0 / mFrameRate) : 0.0;
+    if (mPump->IsEndOfStream() && mPlayheadSec >= mNextFrameSec + finalFrameHold)
     {
         HandleEndOfStream();
     }
@@ -575,17 +589,38 @@ bool VideoPlayer3D::OpenVideo()
     mDurationSec = decoder->GetDurationSeconds();
     mFrameRate   = decoder->GetFrameRate();
 
-    // Allocate the streaming texture seeded with opaque black.
-    std::vector<uint8_t> zeros(size_t(mOutputWidth) * mOutputHeight * 4, 0);
-    for (size_t i = 3; i < zeros.size(); i += 4) zeros[i] = 255;
+    // Reuse the existing streaming texture if dimensions/format match — this is the
+    // common case when SetFilePath swaps to another clip of the same resolution (e.g.
+    // an attract sequence's intro/loop/outro). Reusing keeps consumers' cached
+    // Texture* pointers stable AND keeps the previous clip's last frame on screen
+    // until the new pump's first frame is uploaded, so the swap looks like a clean
+    // freeze-and-replace instead of flashing the no-texture fallback (white).
+    const bool needNewTexture =
+        (mTexture == nullptr) ||
+        (int32_t(mTexture->GetWidth()) != mOutputWidth) ||
+        (int32_t(mTexture->GetHeight()) != mOutputHeight) ||
+        (mTexture->GetFormat() != PixelFormat::RGBA8);
 
-    mTexture = new Texture();
-    mTexture->SetMipmapped(false);
-    mTexture->SetFilterType(FilterType::Linear);
-    mTexture->SetWrapMode(WrapMode::Clamp);
-    mTexture->SetFormat(PixelFormat::RGBA8);
-    mTexture->Init(mOutputWidth, mOutputHeight, zeros.data());
-    mTexture->Create();
+    if (needNewTexture)
+    {
+        if (mTexture != nullptr)
+        {
+            delete mTexture;
+            mTexture = nullptr;
+        }
+        // Seed a fresh streaming texture with opaque black so the first uploaded
+        // frame doesn't get blended against undefined memory.
+        std::vector<uint8_t> zeros(size_t(mOutputWidth) * mOutputHeight * 4, 0);
+        for (size_t i = 3; i < zeros.size(); i += 4) zeros[i] = 255;
+
+        mTexture = new Texture();
+        mTexture->SetMipmapped(false);
+        mTexture->SetFilterType(FilterType::Linear);
+        mTexture->SetWrapMode(WrapMode::Clamp);
+        mTexture->SetFormat(PixelFormat::RGBA8);
+        mTexture->Init(mOutputWidth, mOutputHeight, zeros.data());
+        mTexture->Create();
+    }
 
     // Capture audio descriptor before handing the decoder to the pump — once the pump
     // starts, the worker owns the decoder and direct queries would race.
@@ -671,12 +706,11 @@ void VideoPlayer3D::CloseVideo()
         mPump.reset();
     }
 
-    if (mTexture != nullptr)
-    {
-        // ~Texture() calls Destroy() which releases the GPU resource.
-        delete mTexture;
-        mTexture = nullptr;
-    }
+    // NOTE: mTexture is intentionally NOT deleted here. It survives a SetFilePath
+    // swap so that (a) consumers caching the Texture* keep a live pointer, and
+    // (b) the screen continues to show the previous clip's last frame instead
+    // of the no-texture fallback while the new pump decodes its first frame.
+    // Final teardown happens in ~VideoPlayer3D() and Destroy().
 
     mUnpackScratch.clear();
     mUnpackScratch.shrink_to_fit();
