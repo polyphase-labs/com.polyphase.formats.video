@@ -41,7 +41,21 @@
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
-  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Label="UserMacros">
+
+    <PolyphasePath Condition="'$(PolyphasePath)' == '' and '$(POLYPHASE_PATH)' != ''">$(POLYPHASE_PATH)</PolyphasePath>
+    <PolyphasePath Condition="'$(PolyphasePath)' == '' and '$(PolyphaseDevPath)' != ''">$(PolyphaseDevPath)</PolyphasePath>
+
+    <PolyphasePath Condition="'$(PolyphasePath)' == '' and Exists('$(ProjectDir)..\Polyphase.sln')">$([System.IO.Path]::GetFullPath('$(ProjectDir)..'))</PolyphasePath>
+    <PolyphasePath Condition="'$(PolyphasePath)' == '' and Exists('$(ProjectDir)..\..\Polyphase.sln')">$([System.IO.Path]::GetFullPath('$(ProjectDir)..\..'))</PolyphasePath>
+    <PolyphasePath Condition="'$(PolyphasePath)' == '' and Exists('$(ProjectDir)..\..\..\Polyphase.sln')">$([System.IO.Path]::GetFullPath('$(ProjectDir)..\..\..'))</PolyphasePath>
+    <PolyphasePath Condition="'$(PolyphasePath)' == '' and Exists('$(ProjectDir)..\..\..\..\Polyphase.sln')">$([System.IO.Path]::GetFullPath('$(ProjectDir)..\..\..\..'))</PolyphasePath>
+    <PolyphasePath Condition="'$(PolyphasePath)' == '' and Exists('$(ProjectDir)..\..\..\..\..\Polyphase.sln')">$([System.IO.Path]::GetFullPath('$(ProjectDir)..\..\..\..\..'))</PolyphasePath>
+
+    <PolyphasePath Condition="'$(PolyphasePath)' == '' and Exists('C:\Polyphase\Polyphase.exe')">C:\Polyphase</PolyphasePath>
+    <PolyphasePath Condition="'$(PolyphasePath)' == '' and Exists('C:\Program Files\Polyphase\Polyphase.exe')">C:\Program Files\Polyphase</PolyphasePath>
+    <PolyphasePath Condition="'$(PolyphasePath)' == '' and Exists('C:\Program Files (x86)\Polyphase\Polyphase.exe')">C:\Program Files (x86)\Polyphase</PolyphasePath>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(ProjectDir)Build\Debug\</OutDir>
     <IntDir>$(ProjectDir)Build\Intermediate\Debug\</IntDir>
@@ -59,12 +73,13 @@
       <PreprocessorDefinitions>OCTAVE_PLUGIN_EXPORT;EDITOR=1;LUA_ENABLED=1;GLM_FORCE_RADIANS;PLATFORM_WINDOWS=1;API_VULKAN=1;NOMINMAX;COMPOLYPHASEFORMATSVIDEO_EXPORTS;_DEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Engine\Source;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Engine\Source\Engine;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Engine\Source\Plugins;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\Lua;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\glm;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\Imgui;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\ImGuizmo;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\bullet3\src;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\Assimp;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External;$(VULKAN_SDK)\Include;$(ProjectDir)Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(PolyphasePath)\Engine\Source;$(PolyphasePath)\Engine\Source\Engine;$(PolyphasePath)\Engine\Source\Plugins;$(PolyphasePath)\External\Lua;$(PolyphasePath)\External\glm;$(PolyphasePath)\External\Imgui;$(PolyphasePath)\External\ImGuizmo;$(PolyphasePath)\External\bullet3\src;$(PolyphasePath)\External\Assimp;$(PolyphasePath)\External;$(VULKAN_SDK)\Include;$(ProjectDir)Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Standalone\Build\Windows\x64\DebugEditor\;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Standalone\Build\Windows\x64\DebugEditor\lib\;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\\Standalone\Build\Windows\x64\DebugEditor\;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\\External\Lua\Build\Windows\x64\DebugEditor\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+ 
+      <AdditionalLibraryDirectories>$(PolyphasePath)\;$(PolyphasePath)\lib\;$(PolyphasePath)\Standalone\Build\Windows\x64\DebugEditor\;$(PolyphasePath)\External\Lua\Build\Windows\x64\DebugEditor\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>Polyphase.lib;Lua.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
@@ -77,14 +92,15 @@
       <PreprocessorDefinitions>OCTAVE_PLUGIN_EXPORT;EDITOR=1;LUA_ENABLED=1;GLM_FORCE_RADIANS;PLATFORM_WINDOWS=1;API_VULKAN=1;NOMINMAX;COMPOLYPHASEFORMATSVIDEO_EXPORTS;NDEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Engine\Source;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Engine\Source\Engine;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Engine\Source\Plugins;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\Lua;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\glm;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\Imgui;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\ImGuizmo;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\bullet3\src;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External\Assimp;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\External;$(VULKAN_SDK)\Include;$(ProjectDir)Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(PolyphasePath)\Engine\Source;$(PolyphasePath)\Engine\Source\Engine;$(PolyphasePath)\Engine\Source\Plugins;$(PolyphasePath)\External\Lua;$(PolyphasePath)\External\glm;$(PolyphasePath)\External\Imgui;$(PolyphasePath)\External\ImGuizmo;$(PolyphasePath)\External\bullet3\src;$(PolyphasePath)\External\Assimp;$(PolyphasePath)\External;$(VULKAN_SDK)\Include;$(ProjectDir)Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Standalone\Build\Windows\x64\DebugEditor\;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\Standalone\Build\Windows\x64\DebugEditor\lib\;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\\Standalone\Build\Windows\x64\ReleaseEditor\;M:\Projects\Polyphase\Polyphase\CODE\mergePolyphase\polyphase-engine\\External\Lua\Build\Windows\x64\ReleaseEditor\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <!-- See Debug config above for the layered search-path rationale. -->
+      <AdditionalLibraryDirectories>$(PolyphasePath)\;$(PolyphasePath)\lib\;$(PolyphasePath)\Standalone\Build\Windows\x64\ReleaseEditor\;$(PolyphasePath)\External\Lua\Build\Windows\x64\ReleaseEditor\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>Polyphase.lib;Lua.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
