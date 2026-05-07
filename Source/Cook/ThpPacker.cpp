@@ -281,6 +281,34 @@ bool CookThpVideo(
     std::vector<DspChannelHeader> chHeaders(hasAudio ? cookAudioCh : 0);
     std::vector<std::vector<uint8_t>> chAdpcm(hasAudio ? cookAudioCh : 0);
 
+    // One-shot DSP-ADPCM round-trip self-test. The new per-clip coefficient
+    // analysis (Nintendo's DSPCorrelateCoefs algorithm, ported from
+    // jackoalan/gc-dspadpcm-encode) replaced an in-house LPC + k-means
+    // implementation that produced broken audio twice in a row. The gate
+    // encodes a synthetic dual-tone signal, decodes it, and measures RMS;
+    // if the result exceeds the threshold the cook reverts to the legacy
+    // fixed coefficient table so audio quality never regresses below the
+    // prior baseline.
+    static bool sCoefValidationDone   = false;
+    static bool sCoefValidationPassed = false;
+    if (hasAudio && !sCoefValidationDone)
+    {
+        const double rms = DspEncodeRoundTripRMS();
+        sCoefValidationPassed = (rms < 0.05);
+        sCoefValidationDone   = true;
+        DspSetUsePerClipCoefs(sCoefValidationPassed);
+        if (sCoefValidationPassed)
+        {
+            LogDebug("CookThpVideo: DSP-ADPCM self-test passed (RMS=%.4f)", rms);
+        }
+        else
+        {
+            LogWarning("CookThpVideo: DSP-ADPCM self-test FAILED (RMS=%.4f, "
+                       "threshold=0.05). Falling back to fixed coefficient table; "
+                       "THP audio quality reverts to baseline.", rms);
+        }
+    }
+
     if (hasAudio)
     {
         std::vector<int16_t> chSamples(totalAudioFrames);

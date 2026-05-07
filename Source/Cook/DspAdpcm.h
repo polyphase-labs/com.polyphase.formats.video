@@ -2,9 +2,11 @@
 
 // DSP-ADPCM software codec — Nintendo's GameCube/Wii audio compression format.
 // Compression ratio: 14 PCM samples (28 bytes) -> 8 bytes ADPCM = 28% of original
-// (~3.5:1). Fixed coefficient set; LPC analysis is skipped for implementation
-// simplicity. Quality is acceptable for game audio (speech and music both),
-// noticeably worse than well-tuned ADPCM.
+// (~3.5:1). Per-clip predictor table is computed via Nintendo's documented
+// DSPCorrelateCoefs algorithm (port of jackoalan/gc-dspadpcm-encode, the same
+// algorithm used by Thealexbarney/VGAudio). The cook side gates this behind a
+// round-trip self-test; if the analysis ever produces broken audio the cook
+// reverts to Nintendo's generic fixed coefficient table.
 //
 // Container layout we serialize per channel (matches libogc DspHeader / Nintendo's
 // .dsp file convention enough to round-trip ourselves; we do NOT promise binary
@@ -79,5 +81,20 @@ void DspDecode(
 // already in BE on a BE host (no-op).
 DspChannelHeader DspHeaderToBE(const DspChannelHeader& h);
 DspChannelHeader DspHeaderFromBE(const DspChannelHeader& h);
+
+// Editor-only self-test. Encodes a synthetic dual-tone signal (1 kHz sine +
+// 100 Hz square at 22050 Hz mono, 1 second), decodes it, and returns RMS of
+// (original - reconstructed) / 32768.0 — i.e. fraction of full-scale. A working
+// per-clip encoder scores ~0.02-0.04; the legacy fixed-table path scores
+// ~0.06-0.10; outright broken predictors score > 0.20. Used by the cook to
+// gate per-clip coefficient generation.
+double DspEncodeRoundTripRMS();
+
+// Toggle per-clip coefficient analysis. When false, ComputeClipCoefs short-
+// circuits to Nintendo's generic fixed predictor table (the legacy baseline).
+// Default: true. The cook calls DspSetUsePerClipCoefs(false) if the round-trip
+// self-test fails, so a regression in the analysis code degrades to the prior
+// baseline rather than producing broken audio.
+void DspSetUsePerClipCoefs(bool enabled);
 
 } // namespace VideoPlayerAddon

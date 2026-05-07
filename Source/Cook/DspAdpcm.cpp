@@ -1,7 +1,10 @@
 #include "Cook/DspAdpcm.h"
 
+#include "Log.h"
+
 #include <algorithm>
 #include <array>
+#include <cfloat>
 #include <cmath>
 #include <cstring>
 #include <utility>
@@ -105,188 +108,605 @@ namespace
     }
 
     // ===================================================================
-    // Per-clip coefficient analysis (LPC + k-means).
+    // Per-clip coefficient analysis — DSPCorrelateCoefs.
     //
-    // The 8-pair coefficient TABLE in the channel header is what makes
-    // DSP-ADPCM quality scale or fail. With Nintendo's generic table the
-    // encoder is stuck picking from 8 fixed predictors that may or may
-    // not match the clip's spectral content; signals with strong bass +
-    // bright transients lose either bass (too few low-freq predictors)
-    // or highs (too few alternation predictors), leaving you with the
-    // "thin / distorted / only-the-high-end" sound my old encoder
-    // produced.
+    // Direct port of Nintendo's documented DSP-ADPCM coefficient analysis
+    // algorithm from jackoalan/gc-dspadpcm-encode (grok.c, MIT). The same
+    // algorithm is used by Thealexbarney/VGAudio / DspTool. Both upstream
+    // implementations trace back to BrawlLib's AudioConverter.cs.
     //
-    // Real Nintendo encoders compute the table FROM the audio:
-    //   1. Window the signal, compute the optimal 2nd-order linear
-    //      predictor (c1, c2) for each window via the normal equations
-    //      c1*R0 + c2*R1 = R1
-    //      c1*R1 + c2*R0 = R2
-    //   2. Cluster all those (c1, c2) points into 8 groups (k-means in
-    //      2D) — the centroids become the 8 predictor pairs.
-    //   3. Embed the 8 pairs in the channel header. Decoder reads the
-    //      table from the header, so encode/decode stay in lock-step
-    //      automatically.
+    // The algorithm produces 8 (c1, c2) predictor pairs from the source PCM:
+    //   1. Frame the input into 0x3800-sample (1024-block) analysis windows.
+    //   2. Per-frame: compute autocorrelation, solve the normal equations
+    //      via partial-pivot Gaussian elimination, extract a 2nd-order
+    //      reflection-coefficient pair via Levinson-style recursion.
+    //   3. Cluster all per-frame records into 8 representative pairs through
+    //      iterative refinement (FilterRecords). The split metric is a
+    //      contrast function that approximates ADPCM reconstruction error
+    //      (not pure LPC prediction error) — that's why a naive LPC +
+    //      k-means pipeline doesn't produce equivalent quality.
+    //   4. Quantize the 8 pairs to int16 Q11 and embed them in the channel
+    //      header. The decoder reads from header.coef[] so encode/decode
+    //      round-trip is automatic with whatever table we write here.
     //
-    // The block-search loop is unchanged — it just picks among the
-    // clip-tuned 8 predictors instead of the generic ones.
+    // The block-search loop in DspEncode is unchanged — it picks among the
+    // clip-tuned 8 predictors instead of the generic fallback table.
+    //
+    // Function names match the upstream reference verbatim so future audits
+    // can diff against grok.c / DspEncoder.cs without translation.
     // ===================================================================
 
-    // Compute the optimal normalized (c1, c2) for a small frame of PCM via the
-    // standard 2nd-order LPC normal equations. Returns (1.0, 0.0) — i.e. "next
-    // sample equals previous" — for degenerate input (silence, < 3 samples,
-    // singular system).
-    void FrameLpcNorm(const int16_t* frame, uint32_t n, double& outC1, double& outC2)
+    using TVec = std::array<double, 3>;
+
+    inline void InnerProductMerge(TVec& vecOut, const int16_t* pcmBuf)
     {
-        if (n < 3) { outC1 = 1.0; outC2 = 0.0; return; }
+        for (int i = 0; i <= 2; ++i)
+        {
+            vecOut[i] = 0.0;
+            for (int x = 0; x < 14; ++x)
+                vecOut[i] -= double(pcmBuf[x - i]) * double(pcmBuf[x]);
+        }
+    }
 
-        double r0 = 0.0, r1 = 0.0, r2 = 0.0;
-        for (uint32_t i = 0; i < n; ++i)
+    inline void OuterProductMerge(TVec mtxOut[3], const int16_t* pcmBuf)
+    {
+        for (int x = 1; x <= 2; ++x)
         {
-            const double x = double(frame[i]);
-            r0 += x * x;
+            for (int y = 1; y <= 2; ++y)
+            {
+                mtxOut[x][y] = 0.0;
+                for (int z = 0; z < 14; ++z)
+                    mtxOut[x][y] += double(pcmBuf[z - x]) * double(pcmBuf[z - y]);
+            }
         }
-        for (uint32_t i = 0; i + 1 < n; ++i)
+    }
+
+    bool AnalyzeRanges(TVec mtx[3], int* vecIdxsOut)
+    {
+        double recips[3] = { 0.0, 0.0, 0.0 };
+        double val, tmp, mn, mx;
+
+        for (int x = 1; x <= 2; ++x)
         {
-            r1 += double(frame[i]) * double(frame[i + 1]);
-        }
-        for (uint32_t i = 0; i + 2 < n; ++i)
-        {
-            r2 += double(frame[i]) * double(frame[i + 2]);
+            val = std::max(std::fabs(mtx[x][1]), std::fabs(mtx[x][2]));
+            if (val < DBL_EPSILON)
+                return true;
+            recips[x] = 1.0 / val;
         }
 
-        // System: [R0 R1; R1 R0] * [c1; c2] = [R1; R2]
-        // Solution: c1 = (R0*R1 - R1*R2)/(R0^2 - R1^2)
-        //           c2 = (R0*R2 - R1*R1)/(R0^2 - R1^2)
-        const double det = r0 * r0 - r1 * r1;
-        if (r0 < 1.0 || std::fabs(det) < 1e-9)
+        int maxIndex = 0;
+        for (int i = 1; i <= 2; ++i)
         {
-            outC1 = 1.0; outC2 = 0.0;
+            for (int x = 1; x < i; ++x)
+            {
+                tmp = mtx[x][i];
+                for (int y = 1; y < x; ++y)
+                    tmp -= mtx[x][y] * mtx[y][i];
+                mtx[x][i] = tmp;
+            }
+
+            val = 0.0;
+            for (int x = i; x <= 2; ++x)
+            {
+                tmp = mtx[x][i];
+                for (int y = 1; y < i; ++y)
+                    tmp -= mtx[x][y] * mtx[y][i];
+                mtx[x][i] = tmp;
+                tmp = std::fabs(tmp) * recips[x];
+                if (tmp >= val)
+                {
+                    val = tmp;
+                    maxIndex = x;
+                }
+            }
+
+            if (maxIndex != i)
+            {
+                for (int y = 1; y <= 2; ++y)
+                {
+                    tmp = mtx[maxIndex][y];
+                    mtx[maxIndex][y] = mtx[i][y];
+                    mtx[i][y] = tmp;
+                }
+                recips[maxIndex] = recips[i];
+            }
+
+            vecIdxsOut[i] = maxIndex;
+            if (mtx[i][i] == 0.0)
+                return true;
+
+            if (i != 2)
+            {
+                tmp = 1.0 / mtx[i][i];
+                for (int x = i + 1; x <= 2; ++x)
+                    mtx[x][i] *= tmp;
+            }
+        }
+
+        mn = 1.0e10;
+        mx = 0.0;
+        for (int i = 1; i <= 2; ++i)
+        {
+            tmp = std::fabs(mtx[i][i]);
+            if (tmp < mn) mn = tmp;
+            if (tmp > mx) mx = tmp;
+        }
+        if (mn / mx < 1.0e-10)
+            return true;
+
+        return false;
+    }
+
+    void BidirectionalFilter(TVec mtx[3], const int* vecIdxs, TVec& vecOut)
+    {
+        double tmp;
+        for (int i = 1, x = 0; i <= 2; ++i)
+        {
+            int index = vecIdxs[i];
+            tmp = vecOut[index];
+            vecOut[index] = vecOut[i];
+            if (x != 0)
+            {
+                for (int y = x; y <= i - 1; ++y)
+                    tmp -= vecOut[y] * mtx[i][y];
+            }
+            else if (tmp != 0.0)
+            {
+                x = i;
+            }
+            vecOut[i] = tmp;
+        }
+
+        for (int i = 2; i > 0; --i)
+        {
+            tmp = vecOut[i];
+            for (int y = i + 1; y <= 2; ++y)
+                tmp -= vecOut[y] * mtx[i][y];
+            vecOut[i] = tmp / mtx[i][i];
+        }
+
+        vecOut[0] = 1.0;
+    }
+
+    bool QuadraticMerge(TVec& inOutVec)
+    {
+        const double v2  = inOutVec[2];
+        const double tmp = 1.0 - (v2 * v2);
+
+        if (tmp == 0.0)
+            return true;
+
+        const double v0 = (inOutVec[0] - (v2 * v2)) / tmp;
+        const double v1 = (inOutVec[1] - (inOutVec[1] * v2)) / tmp;
+
+        inOutVec[0] = v0;
+        inOutVec[1] = v1;
+        return std::fabs(v1) > 1.0;
+    }
+
+    void FinishRecord(TVec& in, TVec& out)
+    {
+        for (int z = 1; z <= 2; ++z)
+        {
+            if (in[z] >=  1.0) in[z] =  0.9999999999;
+            else if (in[z] <= -1.0) in[z] = -0.9999999999;
+        }
+        out[0] = 1.0;
+        out[1] = (in[2] * in[1]) + in[1];
+        out[2] = in[2];
+    }
+
+    void MatrixFilter(const TVec& src, TVec& dst)
+    {
+        TVec mtx[3] = { TVec{0,0,0}, TVec{0,0,0}, TVec{0,0,0} };
+
+        mtx[2][0] = 1.0;
+        for (int i = 1; i <= 2; ++i)
+            mtx[2][i] = -src[i];
+
+        for (int i = 2; i > 0; --i)
+        {
+            const double val = 1.0 - (mtx[i][i] * mtx[i][i]);
+            for (int y = 1; y <= i; ++y)
+                mtx[i - 1][y] = ((mtx[i][i] * mtx[i][y]) + mtx[i][y]) / val;
+        }
+
+        dst[0] = 1.0;
+        for (int i = 1; i <= 2; ++i)
+        {
+            dst[i] = 0.0;
+            for (int y = 1; y <= i; ++y)
+                dst[i] += mtx[i][y] * dst[i - y];
+        }
+    }
+
+    void MergeFinishRecord(const TVec& src, TVec& dst)
+    {
+        TVec   tmp{ 0.0, 0.0, 0.0 };
+        double val = src[0];
+
+        dst[0] = 1.0;
+        for (int i = 1; i <= 2; ++i)
+        {
+            double v2 = 0.0;
+            for (int y = 1; y < i; ++y)
+                v2 += dst[y] * src[i - y];
+
+            if (val > 0.0)
+                dst[i] = -(v2 + src[i]) / val;
+            else
+                dst[i] = 0.0;
+
+            tmp[i] = dst[i];
+
+            for (int y = 1; y < i; ++y)
+                dst[y] += dst[i] * dst[i - y];
+
+            val *= 1.0 - (dst[i] * dst[i]);
+        }
+
+        FinishRecord(tmp, dst);
+    }
+
+    double ContrastVectors(const TVec& source1, const TVec& source2)
+    {
+        const double val =
+            (source2[2] * source2[1] + -source2[1]) / (1.0 - source2[2] * source2[2]);
+        const double val1 =
+            (source1[0] * source1[0]) + (source1[1] * source1[1]) + (source1[2] * source1[2]);
+        const double val2 = (source1[0] * source1[1]) + (source1[1] * source1[2]);
+        const double val3 = source1[0] * source1[2];
+        return val1
+             + (2.0 * val * val2)
+             + (2.0 * (-source2[1] * val + -source2[2]) * val3);
+    }
+
+    void FilterRecords(TVec vecBest[8], int exp,
+                       const std::vector<TVec>& records, int recordCount)
+    {
+        TVec   bufferList[8] = {};
+        int    buffer1[8]    = { 0, 0, 0, 0, 0, 0, 0, 0 };
+        TVec   buffer2{ 0.0, 0.0, 0.0 };
+
+        int    index;
+        double value;
+        double tempVal = 0.0;
+
+        for (int x = 0; x < 2; ++x)
+        {
+            for (int y = 0; y < exp; ++y)
+            {
+                buffer1[y] = 0;
+                for (int i = 0; i <= 2; ++i)
+                    bufferList[y][i] = 0.0;
+            }
+
+            for (int z = 0; z < recordCount; ++z)
+            {
+                index = 0;
+                value = 1.0e30;
+                for (int i = 0; i < exp; ++i)
+                {
+                    tempVal = ContrastVectors(vecBest[i], records[size_t(z)]);
+                    if (tempVal < value)
+                    {
+                        value = tempVal;
+                        index = i;
+                    }
+                }
+                buffer1[index]++;
+                MatrixFilter(records[size_t(z)], buffer2);
+                for (int i = 0; i <= 2; ++i)
+                    bufferList[index][i] += buffer2[i];
+            }
+
+            for (int i = 0; i < exp; ++i)
+            {
+                if (buffer1[i] > 0)
+                {
+                    for (int y = 0; y <= 2; ++y)
+                        bufferList[i][y] /= double(buffer1[i]);
+                }
+            }
+
+            for (int i = 0; i < exp; ++i)
+                MergeFinishRecord(bufferList[i], vecBest[i]);
+        }
+    }
+
+    void DSPCorrelateCoefs(const int16_t* source, int samples, int16_t coefsOut[16])
+    {
+        constexpr int kFrameSize = 0x3800;
+        const int     numFrames  = (samples + 13) / 14;
+
+        std::vector<int16_t> blockBuffer(size_t(kFrameSize), int16_t(0));
+
+        // 2 rows of 14 samples each: row 0 = previous block, row 1 = current.
+        // Inner/OuterProductMerge take pcmHistBuffer + 14 and access negative
+        // indices like pcmBuf[x - i] which wrap into row 0. The 28-element
+        // contiguous layout makes that valid.
+        int16_t pcmHistBuffer[28] = {};
+
+        TVec  vec1{ 0.0, 0.0, 0.0 };
+        TVec  vec2{ 0.0, 0.0, 0.0 };
+        TVec  mtx[3]      = { TVec{0,0,0}, TVec{0,0,0}, TVec{0,0,0} };
+        int   vecIdxs[3]  = { 0, 0, 0 };
+
+        std::vector<TVec> records(size_t(numFrames) * 2, TVec{ 0.0, 0.0, 0.0 });
+        int               recordCount = 0;
+
+        TVec vecBest[8] = {};
+
+        int            remaining = samples;
+        const int16_t* srcCursor = source;
+        while (remaining > 0)
+        {
+            int frameSamples;
+            if (remaining > kFrameSize)
+            {
+                frameSamples = kFrameSize;
+                remaining   -= kFrameSize;
+            }
+            else
+            {
+                frameSamples = remaining;
+                for (int z = 0; z < 14 && z + frameSamples < kFrameSize; ++z)
+                    blockBuffer[size_t(frameSamples + z)] = 0;
+                remaining = 0;
+            }
+
+            std::memcpy(blockBuffer.data(), srcCursor,
+                        size_t(frameSamples) * sizeof(int16_t));
+            srcCursor += frameSamples;
+
+            for (int i = 0; i < frameSamples; )
+            {
+                for (int z = 0; z < 14; ++z)
+                    pcmHistBuffer[z] = pcmHistBuffer[14 + z];
+                for (int z = 0; z < 14; ++z)
+                    pcmHistBuffer[14 + z] = blockBuffer[size_t(i++)];
+
+                InnerProductMerge(vec1, pcmHistBuffer + 14);
+                if (std::fabs(vec1[0]) > 10.0)
+                {
+                    OuterProductMerge(mtx, pcmHistBuffer + 14);
+                    if (!AnalyzeRanges(mtx, vecIdxs))
+                    {
+                        BidirectionalFilter(mtx, vecIdxs, vec1);
+                        if (!QuadraticMerge(vec1))
+                        {
+                            FinishRecord(vec1, records[size_t(recordCount)]);
+                            recordCount++;
+                        }
+                    }
+                }
+            }
+        }
+
+        // No usable analysis windows (e.g. silence): fall back to Nintendo's
+        // generic coefficient table. This preserves the prior baseline.
+        if (recordCount == 0)
+        {
+            std::memcpy(coefsOut, kFallbackCoefs, sizeof(kFallbackCoefs));
             return;
         }
 
-        const double c1 = (r0 * r1 - r1 * r2) / det;
-        const double c2 = (r0 * r2 - r1 * r1) / det;
-        outC1 = c1;
-        outC2 = c2;
+        // Initial centroid: the average of MatrixFilter(records[z]) over all
+        // frames. vecBest[0] is the seed for the iterative split.
+        vec1 = TVec{ 1.0, 0.0, 0.0 };
+        for (int z = 0; z < recordCount; ++z)
+        {
+            MatrixFilter(records[size_t(z)], vecBest[0]);
+            for (int y = 1; y <= 2; ++y)
+                vec1[y] += vecBest[0][y];
+        }
+        for (int y = 1; y <= 2; ++y)
+            vec1[y] /= double(recordCount);
+
+        MergeFinishRecord(vec1, vecBest[0]);
+
+        // Iteratively split centroids: 1 -> 2 -> 4 -> 8.
+        int exp = 1;
+        for (int w = 0; w < 3; )
+        {
+            vec2 = TVec{ 0.0, -1.0, 0.0 };
+            for (int i = 0; i < exp; ++i)
+                for (int y = 0; y <= 2; ++y)
+                    vecBest[exp + i][y] = (0.01 * vec2[y]) + vecBest[i][y];
+            ++w;
+            exp = 1 << w;
+            FilterRecords(vecBest, exp, records, recordCount);
+        }
+
+        // Quantize the 8 pairs to int16 Q11. Sign convention: Nintendo's
+        // decoder uses pred = (c1 * yn1 + c2 * yn2 + 1024) >> 11, while the
+        // analysis pipeline carries reflection coefs with the opposite sign,
+        // so we negate here on the way out.
+        for (int z = 0; z < 8; ++z)
+        {
+            double d;
+            d = -vecBest[z][1] * 2048.0;
+            if (d > 0.0)
+                coefsOut[z * 2]     = (d >  32767.0) ? int16_t( 32767) : int16_t(std::lround(d));
+            else
+                coefsOut[z * 2]     = (d < -32768.0) ? int16_t(-32768) : int16_t(std::lround(d));
+
+            d = -vecBest[z][2] * 2048.0;
+            if (d > 0.0)
+                coefsOut[z * 2 + 1] = (d >  32767.0) ? int16_t( 32767) : int16_t(std::lround(d));
+            else
+                coefsOut[z * 2 + 1] = (d < -32768.0) ? int16_t(-32768) : int16_t(std::lround(d));
+        }
+
+        // Final stability sweep. The DSP-ADPCM codec tolerates marginally-
+        // stable predictors (Nintendo's table sits exactly on the AR(2)
+        // stability boundary — e.g. (4096, -2048)), but a predictor with
+        // poles WELL outside the unit circle predicts so aggressively that
+        // the 4-bit residual + clamp16 can't bring reconstruction back to
+        // the source — audible as Nyquist-rate ringing / screech because
+        // the encoder picks "best of bad" and the chosen scale saturates.
+        //
+        // Bounds match the prior in-house IsAcceptableCoef thresholds and
+        // are intentionally generous — anything Nintendo's reference table
+        // ever uses passes. Anything that would produce unbounded prediction
+        // growth gets replaced with the corresponding kFallbackCoefs slot,
+        // which is a known-safe Nintendo predictor.
+        int unstableCount = 0;
+        for (int z = 0; z < 8; ++z)
+        {
+            const double c1 = double(coefsOut[z * 2]);
+            const double c2 = double(coefsOut[z * 2 + 1]);
+            const bool ok =
+                std::isfinite(c1) && std::isfinite(c2) &&
+                std::fabs(c2) <= 3072.0 &&     // |a2| <= 1.5
+                std::fabs(c1) <= 5120.0 &&     // |a1| <= 2.5
+                std::fabs(c1) <= 5325.0 - c2;  // triangle, |a1| <= 2.6 - a2
+            if (!ok)
+            {
+                coefsOut[z * 2]     = kFallbackCoefs[z * 2];
+                coefsOut[z * 2 + 1] = kFallbackCoefs[z * 2 + 1];
+                unstableCount++;
+            }
+        }
+        if (unstableCount > 0)
+        {
+            LogDebug("DSPCorrelateCoefs: %d of 8 predictors failed stability check, "
+                     "replaced with fixed table.", unstableCount);
+        }
+        // Always log the final coef table for debugging — it's small.
+        LogDebug("DSPCorrelateCoefs: coefs = "
+                 "[%d,%d %d,%d %d,%d %d,%d %d,%d %d,%d %d,%d %d,%d]",
+                 coefsOut[0],  coefsOut[1],  coefsOut[2],  coefsOut[3],
+                 coefsOut[4],  coefsOut[5],  coefsOut[6],  coefsOut[7],
+                 coefsOut[8],  coefsOut[9],  coefsOut[10], coefsOut[11],
+                 coefsOut[12], coefsOut[13], coefsOut[14], coefsOut[15]);
     }
 
-    // K-means clustering in 2D with k=8. Initialized from 8 evenly-spaced
-    // points along the input list (deterministic, reproducible cooks). Stops
-    // when no point changes assignment, or after kMaxIters.
-    void KMeans2D8(
-        const std::vector<std::pair<double, double>>& points,
-        std::array<std::pair<double, double>, 8>& centroids)
+    // Toggled by DspSetUsePerClipCoefs from the cook side. When false,
+    // ComputeClipCoefs short-circuits to kFallbackCoefs — used by the cook's
+    // round-trip self-test gate.
+    bool sUsePerClipCoefs = true;
+
+    void ComputeClipCoefs(const int16_t* samples, uint32_t numSamples,
+                          int16_t outCoefs[16])
     {
-        const size_t n = points.size();
-        if (n == 0)
+        // Tiny clips (< 1 ADPCM block × ~5) don't produce enough analysis
+        // windows for stable coefficient estimation; fall back to fixed.
+        if (!sUsePerClipCoefs || numSamples < 64)
         {
-            for (auto& c : centroids) { c.first = 0.0; c.second = 0.0; }
+            std::memcpy(outCoefs, kFallbackCoefs, sizeof(kFallbackCoefs));
             return;
         }
-
-        // Deterministic init: pick 8 points evenly spaced through the input.
-        // (Random init makes cook output non-deterministic across runs, which
-        // breaks reproducible builds.)
-        for (size_t k = 0; k < 8; ++k)
-        {
-            const size_t idx = (n >= 8) ? ((k * n) / 8) : (k % n);
-            centroids[k] = points[idx];
-        }
-
-        std::vector<int> assign(n, -1);
-
-        constexpr int kMaxIters = 30;
-        for (int iter = 0; iter < kMaxIters; ++iter)
-        {
-            bool changed = false;
-            for (size_t i = 0; i < n; ++i)
-            {
-                int    bestK = 0;
-                double bestD = 1e30;
-                for (int k = 0; k < 8; ++k)
-                {
-                    const double dx = points[i].first  - centroids[k].first;
-                    const double dy = points[i].second - centroids[k].second;
-                    const double d  = dx * dx + dy * dy;
-                    if (d < bestD) { bestD = d; bestK = k; }
-                }
-                if (assign[i] != bestK) { assign[i] = bestK; changed = true; }
-            }
-            if (!changed) break;
-
-            std::array<double, 8> sumX{}, sumY{};
-            std::array<int,    8> count{};
-            for (size_t i = 0; i < n; ++i)
-            {
-                const int k = assign[i];
-                sumX[k] += points[i].first;
-                sumY[k] += points[i].second;
-                count[k]++;
-            }
-            for (int k = 0; k < 8; ++k)
-            {
-                if (count[k] > 0)
-                {
-                    centroids[k].first  = sumX[k] / double(count[k]);
-                    centroids[k].second = sumY[k] / double(count[k]);
-                }
-                // Orphan centroids stay where they are. Encoder never picks
-                // them, which is fine — we still have ≥1 useful centroid.
-            }
-        }
+        DSPCorrelateCoefs(samples, int(numSamples), outCoefs);
     }
 
-    // Stability test for the AR(2) predictor x[n] = c1*x[n-1] + c2*x[n-2].
-    // Strictly stable iff both poles of (z^2 - c1*z - c2) lie inside the unit
-    // circle, which gives the Schur-Cohn conditions:
-    //   |c2| < 1
-    //   |c1| < 1 - c2
-    // The ADPCM codec works with marginally-stable predictors too (clamp16 +
-    // residual nib correction prevent true divergence), and Nintendo's
-    // standard table sits right on / past the boundary — e.g. (c1=2.25,
-    // c2=-1.25). What's NOT acceptable is predictors with poles well outside
-    // the unit circle, because those produce predictions that grow so fast
-    // (factors of 3-10 between samples) that the 4-bit residual nib can't
-    // compensate. The encoder's trial loop is forced to "best of bad", and
-    // the chosen reconstruction saturates at ±32767 oscillating at sample
-    // rate / 2 — audible as a high-pitched shriek that doesn't track the
-    // source. Allow Nintendo's range plus a little slack; reject anything
-    // beyond.
-    inline bool IsAcceptableCoef(double c1, double c2)
+    // Encode one PCM channel with a specified coefficient table. Same body as
+    // the prior DspEncode — just parameterized on the coefs so we can call it
+    // twice (once with clip-tuned, once with fallback) and keep whichever
+    // produces lower reconstruction error. The dual-encode strategy is the
+    // safety net against per-clip predictor analysis producing predictors
+    // that look stable on paper but match the source content worse than
+    // Nintendo's fixed table.
+    void EncodeChannelWithCoefs(
+        const int16_t* coefs,
+        const int16_t* inSamples,
+        uint32_t numSamples,
+        uint32_t sampleRate,
+        DspChannelHeader& outHeader,
+        std::vector<uint8_t>& outAdpcm)
     {
-        if (!std::isfinite(c1) || !std::isfinite(c2)) return false;
-        if (std::fabs(c2) > 1.5) return false;
-        if (std::fabs(c1) > 2.5) return false;
-        // Triangle test with slack — Nintendo's (2.25, -1.25) sits at
-        // |c1| = 2.25, 1 - c2 = 2.25 (exact boundary). 2.6 gives a hair
-        // of margin past that for LPC outputs that are essentially the
-        // same predictor with floating-point noise.
-        if (std::fabs(c1) > 2.6 - c2) return false;
-        return true;
+        const uint32_t numBlocks   = (numSamples + 13) / 14;
+        const uint32_t outByteSize = numBlocks * 8;
+        outAdpcm.assign(outByteSize, 0);
+
+        int32_t  yn1     = 0;
+        int32_t  yn2     = 0;
+        uint16_t firstPs = 0;
+
+        for (uint32_t b = 0; b < numBlocks; ++b)
+        {
+            const uint32_t sampleStart = b * 14;
+            const uint32_t sampleEnd   = std::min<uint32_t>(sampleStart + 14, numSamples);
+            const uint32_t numIn       = sampleEnd - sampleStart;
+
+            int     bestPred  = 0;
+            int     bestScale = 0;
+            int64_t bestErr   = INT64_MAX;
+            int32_t bestYn1   = yn1;
+            int32_t bestYn2   = yn2;
+
+            for (int p = 0; p < 8; ++p)
+            {
+                for (int s = 0; s <= 12; ++s)
+                {
+                    int32_t tYn1 = 0, tYn2 = 0;
+                    int64_t err = EncodeBlockTrial(
+                        inSamples + sampleStart, numIn,
+                        coefs, p, s, yn1, yn2,
+                        &tYn1, &tYn2,
+                        /*outBlock=*/nullptr);
+                    if (err < bestErr)
+                    {
+                        bestErr   = err;
+                        bestPred  = p;
+                        bestScale = s;
+                        bestYn1   = tYn1;
+                        bestYn2   = tYn2;
+                    }
+                }
+            }
+
+            int32_t emitYn1 = 0, emitYn2 = 0;
+            EncodeBlockTrial(
+                inSamples + sampleStart, numIn,
+                coefs, bestPred, bestScale, yn1, yn2,
+                &emitYn1, &emitYn2,
+                outAdpcm.data() + b * 8);
+
+            if (b == 0)
+                firstPs = uint16_t(outAdpcm[0]);
+
+            yn1 = bestYn1;
+            yn2 = bestYn2;
+        }
+
+        std::memset(&outHeader, 0, sizeof(outHeader));
+        outHeader.numSamples       = numSamples;
+        outHeader.numAdpcmNibbles  = numBlocks * 16;
+        outHeader.sampleRate       = sampleRate;
+        outHeader.loopFlag         = 0;
+        outHeader.format           = 0;
+        outHeader.loopStartNibble  = 2;
+        outHeader.loopEndNibble    = (numBlocks * 16) - 1;
+        outHeader.currentNibble    = 2;
+        std::memcpy(outHeader.coef, coefs, 16 * sizeof(int16_t));
+        outHeader.gain    = 0;
+        outHeader.ps      = firstPs;
+        outHeader.yn1     = 0;
+        outHeader.yn2     = 0;
+        outHeader.loopPs  = 0;
+        outHeader.loopYn1 = 0;
+        outHeader.loopYn2 = 0;
+        outHeader.pad     = 0;
     }
 
-    // Predictor table selection.
-    //
-    // STATUS: per-clip LPC analysis is implemented above (FrameLpcNorm +
-    // KMeans2D8 + IsAcceptableCoef) but currently *disabled* — every cook
-    // attempt with LPC produced audibly-broken output (Nyquist screech, then
-    // modem-like tones + scratches even with stability filtering and
-    // fallback-replacement of unstable centroids). The implementation has a
-    // bug somewhere between the LPC math, the k-means clustering, and how
-    // the resulting coefficients interact with the per-block encoder, that
-    // I haven't been able to find by inspection alone.
-    //
-    // Reverting to Nintendo's fixed coefficient table here. That gets us
-    // back to the previous baseline ("OK with crackling, not nightmarish")
-    // immediately. The LPC machinery is left in the file so that a future
-    // pass — with actual debug visibility into per-block predictor
-    // selection, encoded bytes, and decoded samples — can either fix it or
-    // replace it with a reference implementation (Nintendo's dspadpcm.exe
-    // or vgmstream's encoder).
-    void ComputeClipCoefs(const int16_t* /*samples*/, uint32_t /*numSamples*/,
-                         int16_t outCoefs[16])
+    // RMS of (orig - decoded(encode(orig))) / 32768.0, fraction of full-scale.
+    // Used by the per-clip dual-encode comparison to pick the better of two
+    // candidate encodings.
+    double EncodedRMS(const DspChannelHeader& header,
+                      const std::vector<uint8_t>& adpcm,
+                      const int16_t* orig, uint32_t numSamples)
     {
-        std::memcpy(outCoefs, kFallbackCoefs, sizeof(kFallbackCoefs));
+        std::vector<int16_t> recon(numSamples, int16_t(0));
+        DspDecode(header, adpcm.data(), uint32_t(adpcm.size()),
+                  recon.data(), numSamples);
+        double sumSq = 0.0;
+        for (uint32_t i = 0; i < numSamples; ++i)
+        {
+            const double e = double(orig[i]) - double(recon[i]);
+            sumSq += e * e;
+        }
+        return std::sqrt(sumSq / double(numSamples)) / 32768.0;
     }
 } // namespace
 
@@ -297,96 +717,57 @@ void DspEncode(
     DspChannelHeader& outHeader,
     std::vector<uint8_t>& outAdpcm)
 {
-    // Step 1: derive the 8-pair predictor table from the source PCM. This is
-    // what differentiates a "fixed-table" encoder (audible distortion on
-    // varied content) from a real Nintendo-grade encoder (clean playback).
-    int16_t coefs[16];
-    ComputeClipCoefs(inSamples, numSamples, coefs);
+    // Per-clip dual-encode safety: encode with clip-tuned coefs AND with
+    // Nintendo's fixed table, keep whichever has lower reconstruction RMS.
+    //
+    // Why: jackoalan's DSPCorrelateCoefs algorithm produces predictors that
+    // are LPC-optimal but not necessarily ADPCM-optimal — the 4-bit residual
+    // quantization plus per-block scale shift can interact badly with some
+    // clip-tuned predictors, producing audible Nyquist-rate ringing or
+    // modulation artifacts on real content even though the synthetic gate
+    // passes. The fixed Nintendo table is the proven baseline; if our
+    // analysis can't beat it for a given clip, we ship the baseline.
+    //
+    // Cost: roughly 2x channel encode time. The encode is a tiny fraction
+    // of total cook time (ffmpeg dominates), so this is negligible.
 
-    const uint32_t numBlocks   = (numSamples + 13) / 14;
-    const uint32_t outByteSize = numBlocks * 8;
-    outAdpcm.assign(outByteSize, 0);
+    int16_t clipCoefs[16];
+    ComputeClipCoefs(inSamples, numSamples, clipCoefs);
 
-    int32_t  yn1     = 0;
-    int32_t  yn2     = 0;
-    uint16_t firstPs = 0;
+    // First encode: clip-tuned coefs.
+    EncodeChannelWithCoefs(clipCoefs, inSamples, numSamples, sampleRate,
+                           outHeader, outAdpcm);
 
-    for (uint32_t b = 0; b < numBlocks; ++b)
+    // If ComputeClipCoefs short-circuited to kFallbackCoefs (silence / tiny
+    // clip / per-clip analysis disabled), the second encode would be
+    // identical — skip it.
+    const bool clipIsFallback =
+        std::memcmp(clipCoefs, kFallbackCoefs, sizeof(kFallbackCoefs)) == 0;
+    if (clipIsFallback || numSamples == 0)
+        return;
+
+    const double clipRms = EncodedRMS(outHeader, outAdpcm, inSamples, numSamples);
+
+    // Second encode: fixed Nintendo coefs, into temporary buffers.
+    DspChannelHeader     fbHeader{};
+    std::vector<uint8_t> fbAdpcm;
+    EncodeChannelWithCoefs(kFallbackCoefs, inSamples, numSamples, sampleRate,
+                           fbHeader, fbAdpcm);
+    const double fbRms = EncodedRMS(fbHeader, fbAdpcm, inSamples, numSamples);
+
+    if (fbRms < clipRms)
     {
-        const uint32_t sampleStart = b * 14;
-        const uint32_t sampleEnd   = std::min<uint32_t>(sampleStart + 14, numSamples);
-        const uint32_t numIn       = sampleEnd - sampleStart;
-
-        // Step 2: per-block search over (predictor, scale). Same search as
-        // before — but now the 8 predictors are clip-tuned, so the lowest-
-        // error pick actually represents the signal well.
-        int     bestPred  = 0;
-        int     bestScale = 0;
-        int64_t bestErr   = INT64_MAX;
-        int32_t bestYn1   = yn1;
-        int32_t bestYn2   = yn2;
-
-        for (int p = 0; p < 8; ++p)
-        {
-            for (int s = 0; s <= 12; ++s)
-            {
-                int32_t tYn1 = 0, tYn2 = 0;
-                int64_t err = EncodeBlockTrial(
-                    inSamples + sampleStart, numIn,
-                    coefs, p, s, yn1, yn2,
-                    &tYn1, &tYn2,
-                    /*outBlock=*/nullptr);
-                if (err < bestErr)
-                {
-                    bestErr   = err;
-                    bestPred  = p;
-                    bestScale = s;
-                    bestYn1   = tYn1;
-                    bestYn2   = tYn2;
-                }
-            }
-        }
-
-        // Emit the chosen block.
-        int32_t emitYn1 = 0, emitYn2 = 0;
-        EncodeBlockTrial(
-            inSamples + sampleStart, numIn,
-            coefs, bestPred, bestScale, yn1, yn2,
-            &emitYn1, &emitYn2,
-            outAdpcm.data() + b * 8);
-
-        if (b == 0)
-        {
-            firstPs = uint16_t(outAdpcm[0]);
-        }
-
-        yn1 = bestYn1;
-        yn2 = bestYn2;
+        // Fixed table is better for this clip. Adopt it.
+        LogWarning("DspEncode: clip-tuned RMS=%.4f worse than fixed RMS=%.4f; "
+                   "shipping fixed coefs for this clip.", clipRms, fbRms);
+        outHeader = fbHeader;
+        outAdpcm  = std::move(fbAdpcm);
     }
-
-    // Channel header. All fields HOST byte order — caller swaps to BE for
-    // wire format via DspHeaderToBE.
-    std::memset(&outHeader, 0, sizeof(outHeader));
-    outHeader.numSamples       = numSamples;
-    outHeader.numAdpcmNibbles  = numBlocks * 16;
-    outHeader.sampleRate       = sampleRate;
-    outHeader.loopFlag         = 0;
-    outHeader.format           = 0;
-    outHeader.loopStartNibble  = 2;
-    outHeader.loopEndNibble    = (numBlocks * 16) - 1;
-    outHeader.currentNibble    = 2;
-    // Embed the per-clip coefficient table — the decoder reads from
-    // header.coef[], not a hardcoded constant, so encode/decode round-trip
-    // automatically with whatever table we put here.
-    std::memcpy(outHeader.coef, coefs, sizeof(coefs));
-    outHeader.gain    = 0;
-    outHeader.ps      = firstPs;
-    outHeader.yn1     = 0;
-    outHeader.yn2     = 0;
-    outHeader.loopPs  = 0;
-    outHeader.loopYn1 = 0;
-    outHeader.loopYn2 = 0;
-    outHeader.pad     = 0;
+    else
+    {
+        LogDebug("DspEncode: clip-tuned RMS=%.4f beats fixed RMS=%.4f; "
+                 "shipping clip-tuned coefs.", clipRms, fbRms);
+    }
 }
 
 void DspDecode(
@@ -448,6 +829,23 @@ namespace
 
 DspChannelHeader DspHeaderToBE(const DspChannelHeader& h)
 {
+#if PLATFORM_DOLPHIN
+    // PowerPC / Wii / GameCube is big-endian — host byte order IS wire byte
+    // order. The cook side never runs on these hosts (cook is editor-only,
+    // editor is x86/ARM-LE), but the runtime ALSO calls this helper via
+    // DspHeaderFromBE on bytes read from disk; that path needs a no-op here.
+    // Without this guard, the round-trip on a BE host swaps once at write
+    // (LE-host cook) and once on read (BE-host runtime), corrupting every
+    // multi-byte field — most visibly the coef[] table, which is the only
+    // field the runtime actually reads from this struct (numSamples / yn1 /
+    // yn2 are overridden by the per-frame caller, and sampleRate is read
+    // separately via ReadBE32At). With kFallbackCoefs the corruption maps
+    // (4096, -2048) → (16, 248) etc. — effectively zero prediction, which
+    // sounds like coarse 4-bit PCM (the "thin / distorted" THP baseline).
+    // With clip-tuned coefs the corruption produces wildly out-of-range
+    // values that blow up reconstruction — audible Nyquist screech.
+    return h;
+#else
     DspChannelHeader o = h;
     o.numSamples      = Swap32(o.numSamples);
     o.numAdpcmNibbles = Swap32(o.numAdpcmNibbles);
@@ -467,11 +865,56 @@ DspChannelHeader DspHeaderToBE(const DspChannelHeader& h)
     o.loopYn2 = SwapI16(o.loopYn2);
     o.pad     = Swap16(o.pad);
     return o;
+#endif
 }
 
 DspChannelHeader DspHeaderFromBE(const DspChannelHeader& h)
 {
-    return DspHeaderToBE(h); // byte-swap is its own inverse
+    return DspHeaderToBE(h); // byte-swap (or no-op on BE host) is its own inverse
+}
+
+void DspSetUsePerClipCoefs(bool enabled)
+{
+    sUsePerClipCoefs = enabled;
+}
+
+double DspEncodeRoundTripRMS()
+{
+    constexpr uint32_t kRate    = 22050;
+    constexpr uint32_t kSamples = 22050; // 1 second
+    constexpr double   kPi      = 3.14159265358979323846;
+
+    // Synthetic dual-tone signal: 1 kHz sine + 100 Hz square. Mixed bandwidth
+    // is exactly the failure mode kFallbackCoefs exhibits on real content, so
+    // a passing round-trip on this signal proves the per-clip table is doing
+    // useful work.
+    std::vector<int16_t> orig(kSamples);
+    for (uint32_t i = 0; i < kSamples; ++i)
+    {
+        const double t       = double(i) / double(kRate);
+        const double sineVal = 0.4 * std::sin(2.0 * kPi * 1000.0 * t);
+        const double sqPhase = std::fmod(2.0 * kPi * 100.0 * t, 2.0 * kPi);
+        const double sqVal   = (sqPhase < kPi) ? 0.3 : -0.3;
+        const double mix     = sineVal + sqVal;
+        const double clamped = std::max(-1.0, std::min(1.0, mix));
+        orig[i] = int16_t(std::lround(clamped * 32767.0));
+    }
+
+    DspChannelHeader     hdr{};
+    std::vector<uint8_t> adpcm;
+    DspEncode(orig.data(), kSamples, kRate, hdr, adpcm);
+
+    std::vector<int16_t> recon(kSamples, int16_t(0));
+    DspDecode(hdr, adpcm.data(), uint32_t(adpcm.size()),
+              recon.data(), kSamples);
+
+    double sumSq = 0.0;
+    for (uint32_t i = 0; i < kSamples; ++i)
+    {
+        const double e = double(orig[i]) - double(recon[i]);
+        sumSq += e * e;
+    }
+    return std::sqrt(sumSq / double(kSamples)) / 32768.0;
 }
 
 } // namespace VideoPlayerAddon
