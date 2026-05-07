@@ -145,13 +145,7 @@ ThreadFuncRet AsyncMediaPump::ThreadEntry(void* arg)
 {
     AsyncMediaPump* self = static_cast<AsyncMediaPump*>(arg);
     self->WorkerLoop();
-#if PLATFORM_WINDOWS
-    return 0;
-#elif PLATFORM_3DS
-    return;
-#else
-    return nullptr;
-#endif
+    THREAD_RETURN();
 }
 
 void AsyncMediaPump::HandleSeek(double seconds)

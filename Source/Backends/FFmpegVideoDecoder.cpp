@@ -16,6 +16,7 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 namespace VideoPlayerAddon
@@ -49,6 +50,94 @@ bool FFmpegVideoDecoder::Open(const char* path)
         return false;
     }
 
+    return FinishOpen();
+}
+
+// AVIOContext callbacks reading out of an externally-owned byte buffer. opaque points
+// at the FFmpegVideoDecoder so we can mutate its mMemPos cursor.
+int FFmpegVideoDecoder::MemReadPacket(void* opaque, uint8_t* buf, int bufSize)
+{
+    auto* self = static_cast<FFmpegVideoDecoder*>(opaque);
+    if (self->mMemPos >= self->mMemSize) return AVERROR_EOF;
+    const size_t remaining = self->mMemSize - self->mMemPos;
+    const size_t want = std::min(size_t(bufSize), remaining);
+    memcpy(buf, self->mMemData + self->mMemPos, want);
+    self->mMemPos += want;
+    return int(want);
+}
+
+int64_t FFmpegVideoDecoder::MemSeek(void* opaque, int64_t offset, int whence)
+{
+    auto* self = static_cast<FFmpegVideoDecoder*>(opaque);
+    if (whence == AVSEEK_SIZE) return int64_t(self->mMemSize);
+    int64_t target = 0;
+    switch (whence & ~AVSEEK_FORCE)
+    {
+        case SEEK_SET: target = offset; break;
+        case SEEK_CUR: target = int64_t(self->mMemPos) + offset; break;
+        case SEEK_END: target = int64_t(self->mMemSize) + offset; break;
+        default: return -1;
+    }
+    if (target < 0) target = 0;
+    if (target > int64_t(self->mMemSize)) target = int64_t(self->mMemSize);
+    self->mMemPos = size_t(target);
+    return target;
+}
+
+bool FFmpegVideoDecoder::OpenMemory(const uint8_t* data, size_t size, const char* codecHint)
+{
+    Close();
+
+    if (data == nullptr || size == 0) return false;
+
+    mMemData = data;
+    mMemSize = size;
+    mMemPos  = 0;
+
+    constexpr int kAvioBufSize = 32 * 1024;
+    unsigned char* avioBuf = (unsigned char*)av_malloc(kAvioBufSize);
+    if (avioBuf == nullptr) { Close(); return false; }
+
+    mAvioCtx = avio_alloc_context(avioBuf, kAvioBufSize,
+                                  /*write_flag=*/0,
+                                  /*opaque=*/this,
+                                  &MemReadPacket, /*write_packet=*/nullptr, &MemSeek);
+    if (mAvioCtx == nullptr)
+    {
+        av_free(avioBuf);
+        Close();
+        return false;
+    }
+
+    mFormatCtx = avformat_alloc_context();
+    if (mFormatCtx == nullptr) { Close(); return false; }
+    mFormatCtx->pb = mAvioCtx;
+    mFormatCtx->flags |= AVFMT_FLAG_CUSTOM_IO;
+
+    // Hint the demuxer when we have one. avformat_open_input takes a const char*
+    // "filename" we can leave null since we have a custom AVIOContext, but a
+    // short_name on AVInputFormat helps for containers FFmpeg can't probe (e.g.
+    // raw H.264 Annex-B). For .mp4/.webm/etc. probing always succeeds so this
+    // is mostly a future-proofing.
+    const AVInputFormat* fmt = nullptr;
+    if (codecHint != nullptr && codecHint[0] != '\0')
+    {
+        fmt = av_find_input_format(codecHint);
+    }
+
+    if (avformat_open_input(&mFormatCtx, /*filename=*/nullptr, fmt, nullptr) < 0)
+    {
+        // avformat_open_input frees mFormatCtx on failure; null it so Close() doesn't double-free.
+        mFormatCtx = nullptr;
+        Close();
+        return false;
+    }
+
+    return FinishOpen();
+}
+
+bool FFmpegVideoDecoder::FinishOpen()
+{
     if (avformat_find_stream_info(mFormatCtx, nullptr) < 0)
     {
         Close();
@@ -218,6 +307,19 @@ void FFmpegVideoDecoder::Close()
     CloseAudio();
 
     if (mFormatCtx != nullptr)  { avformat_close_input(&mFormatCtx); }
+
+    // Custom AVIOContext is ours to free even after avformat_close_input — that call
+    // releases the format ctx but leaves pb (and pb->buffer) alone. The internal
+    // buffer was allocated with av_malloc in OpenMemory, so it must be freed with
+    // av_freep BEFORE avio_context_free or it leaks.
+    if (mAvioCtx != nullptr)
+    {
+        av_freep(&mAvioCtx->buffer);
+        avio_context_free(&mAvioCtx);
+    }
+    mMemData = nullptr;
+    mMemSize = 0;
+    mMemPos  = 0;
 
     mVideoStreamIndex = -1;
     mWidth = mHeight = 0;

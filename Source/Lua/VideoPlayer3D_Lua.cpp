@@ -5,6 +5,7 @@
 #include "LuaBindings/LuaUtils.h"
 
 #include "Assets/Texture.h"
+#include "Assets/VideoClip.h"
 
 #if LUA_ENABLED
 
@@ -77,6 +78,30 @@ int VideoPlayer3D_Lua::GetFilePath(lua_State* L)
 {
     VideoPlayer3D* vp = CHECK_VIDEO_PLAYER_3D(L, 1);
     lua_pushstring(L, vp->GetFilePath().c_str());
+    return 1;
+}
+
+int VideoPlayer3D_Lua::SetVideoClip(lua_State* L)
+{
+    VideoPlayer3D* vp = CHECK_VIDEO_PLAYER_3D(L, 1);
+    Asset* asset = nullptr;
+    if (!lua_isnil(L, 2))
+    {
+        asset = CHECK_ASSET(L, 2);
+    }
+    // Allow either a real VideoClip or nil (clear). Reject mismatched asset types
+    // by silently treating them as nil so script bugs don't crash playback.
+    VideoClip* clip = (asset != nullptr && asset->GetType() == VideoClip::GetStaticType())
+                        ? static_cast<VideoClip*>(asset)
+                        : nullptr;
+    vp->SetVideoClip(clip);
+    return 0;
+}
+
+int VideoPlayer3D_Lua::GetVideoClip(lua_State* L)
+{
+    VideoPlayer3D* vp = CHECK_VIDEO_PLAYER_3D(L, 1);
+    Asset_Lua::Create(L, vp->GetVideoClip(), true /*allowNull*/);
     return 1;
 }
 
@@ -210,6 +235,8 @@ void VideoPlayer3D_Lua::Bind()
 
     REGISTER_TABLE_FUNC(L, mtIndex, SetFilePath);
     REGISTER_TABLE_FUNC(L, mtIndex, GetFilePath);
+    REGISTER_TABLE_FUNC(L, mtIndex, SetVideoClip);
+    REGISTER_TABLE_FUNC(L, mtIndex, GetVideoClip);
     REGISTER_TABLE_FUNC(L, mtIndex, SetAutoPlay);
     REGISTER_TABLE_FUNC(L, mtIndex, GetAutoPlay);
     REGISTER_TABLE_FUNC(L, mtIndex, SetLoop);

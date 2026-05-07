@@ -31,6 +31,8 @@ struct VideoPlayer3D_Lua
 
     static int SetFilePath(lua_State* L);
     static int GetFilePath(lua_State* L);
+    static int SetVideoClip(lua_State* L);
+    static int GetVideoClip(lua_State* L);
     static int SetAutoPlay(lua_State* L);
     static int GetAutoPlay(lua_State* L);
     static int SetLoop(lua_State* L);

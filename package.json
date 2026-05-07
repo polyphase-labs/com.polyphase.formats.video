@@ -8,25 +8,37 @@
         "sourceDir": "Source",
         "binaryName": "com.polyphase.formats.video",
         "entrySymbol": "PolyphasePlugin_GetDesc",
-        "apiVersion": 3,
-        "extraDefines": [
-            "POLYPHASE_WITH_FFMPEG=1"
-        ],
-        "extraIncludeDirs": [
-            "External/ffmpeg/include"
-        ],
-        "extraLibDirs": [
-            "External/ffmpeg/lib"
-        ],
-        "extraLibs": [
-            "avformat.lib",
-            "avcodec.lib",
-            "avutil.lib",
-            "swscale.lib",
-            "swresample.lib"
-        ],
-        "copyBinaries": [
-            "External/ffmpeg/bin"
-        ]
+        "apiVersion": 3
+    },
+    "nativePerPlatform": {
+        "Windows": {
+            "extraDefines": [
+                "POLYPHASE_WITH_FFMPEG=1"
+            ],
+            "extraIncludeDirs": [
+                "External/ffmpeg/include"
+            ],
+            "extraLibDirs": [
+                "External/ffmpeg/lib"
+            ],
+            "extraLibs": [
+                "avformat.lib",
+                "avcodec.lib",
+                "avutil.lib",
+                "swscale.lib",
+                "swresample.lib"
+            ],
+            "copyBinaries": [
+                "External/ffmpeg/bin"
+            ]
+        },
+        "Linux": {
+            "extraDefines": [
+                "POLYPHASE_WITH_FFMPEG=1"
+            ]
+        },
+        "GameCube": {},
+        "Wii": {},
+        "3DS": {}
     }
 }

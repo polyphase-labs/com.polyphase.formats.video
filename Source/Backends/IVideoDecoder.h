@@ -50,6 +50,20 @@ public:
     virtual ~IVideoDecoder() = default;
 
     virtual bool Open(const char* path) = 0;
+
+    // Open from a memory buffer instead of a filesystem path. Used when playing back a
+    // VideoClip asset whose source bytes live inside the cooked .oct stream rather than
+    // as a loose file. `codecHint` is a lower-cased extension string ("mp4", "webm", ...)
+    // used by demuxers that need a format hint when no file extension is available; may
+    // be nullptr/empty if the demuxer can probe the container itself.
+    // The buffer must remain valid until Close(); the decoder does not take ownership.
+    // Backends that don't support in-memory playback can leave the default false return.
+    virtual bool OpenMemory(const uint8_t* data, size_t size, const char* codecHint)
+    {
+        (void)data; (void)size; (void)codecHint;
+        return false;
+    }
+
     virtual void Close() = 0;
 
     virtual VideoFrameDesc GetFrameDesc() const = 0;

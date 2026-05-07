@@ -11,6 +11,7 @@ struct AVFormatContext;
 struct AVCodecContext;
 struct AVFrame;
 struct AVPacket;
+struct AVIOContext;
 struct SwsContext;
 struct SwrContext;
 
@@ -26,6 +27,7 @@ public:
     ~FFmpegVideoDecoder() override;
 
     bool Open(const char* path) override;
+    bool OpenMemory(const uint8_t* data, size_t size, const char* codecHint) override;
     void Close() override;
 
     VideoFrameDesc GetFrameDesc() const override { return {mWidth, mHeight}; }
@@ -41,6 +43,15 @@ public:
     AudioDecodeResult DecodeNextAudio(DecodedAudio& outChunk) override;
 
 private:
+    // Shared post-avformat_open_input setup (find_stream_info, video + audio
+    // codec init, sws/swr alloc). Used by both Open(path) and OpenMemory(buf).
+    bool FinishOpen();
+
+    // AVIOContext callbacks for OpenMemory. Static so they have a C-compatible
+    // signature; opaque is the FFmpegVideoDecoder*.
+    static int     MemReadPacket(void* opaque, uint8_t* buf, int bufSize);
+    static int64_t MemSeek(void* opaque, int64_t offset, int whence);
+
     bool DecodeOneAvailableVideo(DecodedFrame& outFrame, bool& gotEOS);
     bool OpenAudioStream();
     void CloseAudio();
@@ -50,6 +61,14 @@ private:
     bool PumpOnePacket();
 
     AVFormatContext* mFormatCtx  = nullptr;
+
+    // In-memory source state. mAvioCtx is non-null only when the asset was opened via
+    // OpenMemory; Close() tears it down. mMemPos cursors into the externally-owned
+    // mMemData buffer (size mMemSize).
+    AVIOContext*     mAvioCtx    = nullptr;
+    const uint8_t*   mMemData    = nullptr;
+    size_t           mMemSize    = 0;
+    size_t           mMemPos     = 0;
 
     // Video pipeline
     AVCodecContext*  mCodecCtx   = nullptr;

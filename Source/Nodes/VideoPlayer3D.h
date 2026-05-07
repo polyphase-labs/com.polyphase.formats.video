@@ -1,11 +1,14 @@
 #pragma once
 
 #include "Nodes/3D/Node3d.h"
+#include "AssetRef.h"
 
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
+
+class VideoClip;
 
 namespace VideoPlayerAddon
 {
@@ -59,6 +62,11 @@ public:
     void SetFilePath(const std::string& path);
     const std::string& GetFilePath() const { return mFilePath; }
 
+    // VideoClip-asset-driven playback (preferred over SetFilePath when both are set).
+    // The clip's source bytes are decoded in-memory; nothing on disk is referenced.
+    void SetVideoClip(VideoClip* clip);
+    VideoClip* GetVideoClip() const;
+
     void SetAutoPlay(bool v) { mAutoPlay = v; }
     bool GetAutoPlay() const { return mAutoPlay; }
 
@@ -95,6 +103,7 @@ protected:
 
     // Properties (serialized / editor-exposed)
     std::string mFilePath;
+    AssetRef    mVideoClip; // typed accessor: mVideoClip.Get<VideoClip>()
     bool mAutoPlay = false;
     bool mLoop = false;
     float mPlaybackSpeed = 1.0f;

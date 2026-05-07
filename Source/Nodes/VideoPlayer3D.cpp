@@ -3,8 +3,13 @@
 #include "Backends/IVideoDecoder.h"
 #include "Backends/VideoDecoderFactory.h"
 #include "Backends/AsyncMediaPump.h"
+#include "Backends/ThpVideoDecoder.h"
+#include "Backends/MvdVideoDecoder.h"
+
+#include <cstring>
 #include "Util/AlphaUnpack.h"
 #include "EngineAPIAccess.h"
+#include "Assets/VideoClip.h"
 
 #include "Engine.h"
 #include "Log.h"
@@ -36,6 +41,13 @@ bool VideoPlayer3D::HandlePropChange(Datum* datum, uint32_t index, const void* n
     {
         const std::string* s = reinterpret_cast<const std::string*>(newValue);
         vp->SetFilePath(*s);
+        handled = true;
+    }
+    else if (prop->mName == "Video Clip")
+    {
+        // newValue points at the new Asset* the inspector is assigning.
+        Asset* a = *reinterpret_cast<Asset* const*>(newValue);
+        vp->SetVideoClip(static_cast<VideoClip*>(a));
         handled = true;
     }
     else if (prop->mName == "Alpha Mode")
@@ -92,6 +104,8 @@ void VideoPlayer3D::GatherProperties(std::vector<Property>& outProps)
     SCOPED_CATEGORY("Video");
 
     outProps.push_back(Property(DatumType::Bool, "Play", this, &mPlaying, 1, HandlePropChange));
+    outProps.push_back(Property(DatumType::Asset, "Video Clip", this, &mVideoClip, 1, HandlePropChange,
+                                int32_t(VideoClip::GetStaticType())));
     outProps.push_back(Property(DatumType::String, "File Path", this, &mFilePath, 1, HandlePropChange));
     outProps.push_back(Property(DatumType::Bool, "Auto Play", this, &mAutoPlay));
     outProps.push_back(Property(DatumType::Bool, "Loop", this, &mLoop));
@@ -124,7 +138,7 @@ void VideoPlayer3D::Start()
 
     mStarted = true;
 
-    if (!mFilePath.empty())
+    if (mVideoClip.Get() != nullptr || !mFilePath.empty())
     {
         if (OpenVideo())
         {
@@ -305,8 +319,8 @@ void VideoPlayer3D::Play()
 {
     if (!mReady)
     {
-        // Late Play() called before Start()? Try to open now if we have a path.
-        if (mFilePath.empty() || !OpenVideo())
+        // Late Play() called before Start()? Try to open now if we have a clip or path.
+        if ((mVideoClip.Get() == nullptr && mFilePath.empty()) || !OpenVideo())
         {
             return;
         }
@@ -432,13 +446,35 @@ void VideoPlayer3D::SetFilePath(const std::string& path)
     if (mStarted)
     {
         CloseVideo();
-        if (!mFilePath.empty() && OpenVideo())
+        if ((mVideoClip.Get() != nullptr || !mFilePath.empty()) && OpenVideo())
         {
             // Defer OnReady one tick so listeners set up via ConnectSignal earlier still fire.
             mPendingReady = true;
             mPendingAutoPlay = mAutoPlay;
         }
     }
+}
+
+void VideoPlayer3D::SetVideoClip(VideoClip* clip)
+{
+    if (mVideoClip.Get() == clip) return;
+
+    mVideoClip = clip;
+
+    if (mStarted)
+    {
+        CloseVideo();
+        if ((mVideoClip.Get() != nullptr || !mFilePath.empty()) && OpenVideo())
+        {
+            mPendingReady = true;
+            mPendingAutoPlay = mAutoPlay;
+        }
+    }
+}
+
+VideoClip* VideoPlayer3D::GetVideoClip() const
+{
+    return mVideoClip.Get<VideoClip>();
 }
 
 void VideoPlayer3D::SetAlphaMode(VideoAlphaMode m)
@@ -535,31 +571,106 @@ bool VideoPlayer3D::OpenVideo()
 {
     CloseVideo();
 
-    if (mFilePath.empty())
+    VideoClip* clip = mVideoClip.Get<VideoClip>();
+    if (clip == nullptr && mFilePath.empty())
     {
-        EmitErrorSignal("No video file path set");
+        EmitErrorSignal("No video clip or file path set");
         return false;
     }
 
-    // The inspector-set path is relative to the project directory; FFmpeg wants a real
-    // OS path. Resolve here so the player is robust to whatever CWD the editor launched
-    // with (editor exe dir, wherever the IDE was started, etc.).
-    const std::string resolvedPath = ResolveAssetPath(mFilePath);
-
-    std::unique_ptr<VideoPlayerAddon::IVideoDecoder> decoder =
-        VideoPlayerAddon::CreateVideoDecoder(resolvedPath);
-    if (decoder == nullptr)
+    std::unique_ptr<VideoPlayerAddon::IVideoDecoder> decoder;
+    if (clip != nullptr)
     {
-        EmitErrorSignal("No decoder backend available for file");
-        return false;
+        // VideoClip path: decode either from the asset's inline source bytes
+        // (default) or stream from a sidecar file on disk (when the asset has
+        // mUseSidecar set + a sidecar path written by TestCook). The sidecar
+        // lazy-IO path drops peak memory during playback from clip-size to
+        // ~150 KB, important for longer clips on GameCube's 24 MB RAM.
+        // Presence of mSidecarPath is the authoritative "did the cook produce a
+        // sidecar?" signal. THP/N3MV cooks set it; PCV1 (and uncooked imports)
+        // leave it empty.
+        const bool useSidecar = !clip->GetSidecarPath().empty();
+
+        if (useSidecar)
+        {
+            // For sidecar mode the factory has no bytes to peek at — pick the
+            // decoder by file extension. .cook.thp -> ThpVideoDecoder,
+            // .cook.n3mv -> MvdVideoDecoder. Anything else is unexpected;
+            // fall through to factory-by-magic which will attempt OpenMemory
+            // and fail cleanly.
+            const std::string& sp = clip->GetSidecarPath();
+            const auto endsWith = [&](const char* suffix) {
+                const size_t n = std::strlen(suffix);
+                return sp.size() >= n && sp.compare(sp.size() - n, n, suffix) == 0;
+            };
+            if (endsWith(".cook.thp"))
+            {
+                decoder = std::unique_ptr<VideoPlayerAddon::IVideoDecoder>(new VideoPlayerAddon::ThpVideoDecoder());
+            }
+            else if (endsWith(".cook.n3mv"))
+            {
+                decoder = std::unique_ptr<VideoPlayerAddon::IVideoDecoder>(new VideoPlayerAddon::MvdVideoDecoder());
+            }
+            else
+            {
+                decoder = VideoPlayerAddon::CreateVideoDecoderForClip(clip);
+            }
+        }
+        else
+        {
+            decoder = VideoPlayerAddon::CreateVideoDecoderForClip(clip);
+        }
+        if (decoder == nullptr)
+        {
+            EmitErrorSignal("No decoder backend available for video clip");
+            return false;
+        }
+
+        bool opened = false;
+        if (useSidecar)
+        {
+            opened = decoder->Open(clip->GetSidecarPath().c_str());
+            if (!opened)
+            {
+                LogError("VideoPlayer3D: sidecar Open failed for '%s' at '%s' — "
+                         "falling back to inline bytes if any",
+                         clip->GetName().c_str(), clip->GetSidecarPath().c_str());
+            }
+        }
+        if (!opened)
+        {
+            const auto& bytes = clip->GetSourceData();
+            opened = decoder->OpenMemory(bytes.data(), bytes.size(), clip->GetCodecHint().c_str());
+        }
+        if (!opened)
+        {
+            LogError("VideoPlayer3D: decoder open failed for VideoClip '%s' (sidecar=%d, bytes=%u)",
+                     clip->GetName().c_str(), useSidecar ? 1 : 0, clip->GetSourceSize());
+            EmitErrorSignal("Decoder failed to open video clip");
+            return false;
+        }
     }
-
-    if (!decoder->Open(resolvedPath.c_str()))
+    else
     {
-        LogError("VideoPlayer3D: decoder open failed for resolved path '%s' (raw '%s')",
-                 resolvedPath.c_str(), mFilePath.c_str());
-        EmitErrorSignal("Decoder failed to open file");
-        return false;
+        // Legacy file-path mode. The inspector-set path is relative to the project
+        // directory; FFmpeg wants a real OS path. Resolve here so the player is
+        // robust to whatever CWD the editor launched with.
+        const std::string resolvedPath = ResolveAssetPath(mFilePath);
+
+        decoder = VideoPlayerAddon::CreateVideoDecoder(resolvedPath);
+        if (decoder == nullptr)
+        {
+            EmitErrorSignal("No decoder backend available for file");
+            return false;
+        }
+
+        if (!decoder->Open(resolvedPath.c_str()))
+        {
+            LogError("VideoPlayer3D: decoder open failed for resolved path '%s' (raw '%s')",
+                     resolvedPath.c_str(), mFilePath.c_str());
+            EmitErrorSignal("Decoder failed to open file");
+            return false;
+        }
     }
 
     const VideoPlayerAddon::VideoFrameDesc desc = decoder->GetFrameDesc();

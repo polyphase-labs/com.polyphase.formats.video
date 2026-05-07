@@ -12,6 +12,11 @@
 
 #include "EngineAPIAccess.h"
 #include "Lua/VideoPlayer3D_Lua.h"
+#include "Assets/VideoClip.h"
+
+#if EDITOR
+#include "AssetManager.h"
+#endif
 
 // Cached engine API accessor. Exposed so any addon file can reach the API without
 // threading the pointer through constructors. See EngineAPIAccess.h.
@@ -25,6 +30,26 @@ namespace VideoPlayerAddon
 static int OnLoad(PolyphaseEngineAPI* api)
 {
     VideoPlayerAddon::SetEngineAPI(api);
+
+    // Pull the addon's asset types into the link so their static initializers
+    // register the class with the AssetManager. Without this the optimiser may
+    // discard the translation unit since nothing else references its symbols.
+    FORCE_LINK_CALL(VideoClip);
+
+#if EDITOR
+    // Teach the editor's import dispatcher which extensions belong to VideoClip.
+    // Lower-case + leading dot to match the comparison style in
+    // ActionManager::ImportAsset. Re-registered on every addon reload, which is
+    // fine: the map just overwrites.
+    TypeId vt = VideoClip::GetStaticType();
+    RegisterImportExtension(".mp4",  vt);
+    RegisterImportExtension(".mov",  vt);
+    RegisterImportExtension(".webm", vt);
+    RegisterImportExtension(".mkv",  vt);
+    RegisterImportExtension(".avi",  vt);
+    RegisterImportExtension(".m4v",  vt);
+#endif
+
     if (api != nullptr && api->LogDebug != nullptr)
     {
         api->LogDebug("VideoPlayer addon loaded");

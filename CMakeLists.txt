@@ -4,11 +4,24 @@ project(com.polyphase.formats.video)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Polyphase Engine path resolution.
+#
+# Priority order:
+#   1. -DPOLYPHASE_PATH=... or already set in parent script
+#   2. POLYPHASE_PATH environment variable
+#   3. Walk up from this CMakeLists looking for Polyphase.sln
+#      (catches addon-under-engine and sibling-repo layouts)
+#   4. Default install locations (C:/Polyphase, /opt/Polyphase)
+#   5. Engine path captured at generation time (last resort)
+# Walk up from this CMakeLists looking for either:
+#   - PolyphaseConfig.cmake : project-local engine path written
+#                             by the editor on project open. This
+#                             is the canonical answer for addons
+#                             living in <project>/Packages.
+#   - Polyphase.sln         : engine source root, for addons
+#                             checked out under or beside the
+#                             engine repo.
 function(_polyphase_find_via_walk OUT_VAR)
-    # Walk up from this CMakeLists looking for either of:
-    #   - PolyphaseConfig.cmake (project-local; written by editor on project
-    #     open — this is the canonical answer for addons in <project>/Packages)
-    #   - Polyphase.sln (engine source root)
     set(_p "${CMAKE_CURRENT_SOURCE_DIR}")
     foreach(_i RANGE 1 6)
         get_filename_component(_p "${_p}" DIRECTORY)
@@ -41,11 +54,7 @@ if(NOT DEFINED POLYPHASE_PATH OR POLYPHASE_PATH STREQUAL "")
         elseif(UNIX AND EXISTS "/opt/Polyphase/PolyphaseEditor")
             set(POLYPHASE_PATH "/opt/Polyphase")
         else()
-            message(FATAL_ERROR
-                "POLYPHASE_PATH is not set and no installed Polyphase Engine was "
-                "found in the default locations. Set POLYPHASE_PATH (env var or "
-                "-DPOLYPHASE_PATH=...) to either an installed engine root "
-                "(e.g. C:/Polyphase) or to your engine source-tree root.")
+            set(POLYPHASE_PATH "M:/Projects/Polyphase/Polyphase/CODE/mergePolyphase/polyphase-engine/")
         endif()
     endif()
 endif()
@@ -100,7 +109,7 @@ target_compile_definitions(com.polyphase.formats.video PRIVATE
     COMPOLYPHASEFORMATSVIDEO_EXPORTS
 )
 
-
+# Link against Polyphase import library and dependencies
 if(WIN32)
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         set(POLYPHASE_DEV_LIB_PATH "${POLYPHASE_PATH}/Standalone/Build/Windows/x64/DebugEditor")
@@ -110,9 +119,9 @@ if(WIN32)
         set(POLYPHASE_DEV_LUA_PATH "${POLYPHASE_PATH}/External/Lua/Build/Windows/x64/ReleaseEditor")
     endif()
     target_link_directories(com.polyphase.formats.video PRIVATE
-        "${POLYPHASE_PATH}"          # installed: Polyphase.lib next to .exe
-        "${POLYPHASE_PATH}/lib"      # alt installed layout
-        "${POLYPHASE_DEV_LIB_PATH}"  # dev: Standalone build output
-        "${POLYPHASE_DEV_LUA_PATH}") # dev: Lua build output
+        "${POLYPHASE_PATH}"
+        "${POLYPHASE_PATH}/lib"
+        "${POLYPHASE_DEV_LIB_PATH}"
+        "${POLYPHASE_DEV_LUA_PATH}")
     target_link_libraries(com.polyphase.formats.video PRIVATE Polyphase Lua)
 endif()
