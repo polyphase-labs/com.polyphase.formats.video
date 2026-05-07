@@ -107,12 +107,15 @@ private:
     std::atomic<bool> mRunning { false };
     std::atomic<bool> mError   { false };
     std::atomic<bool> mEndOfStream { false };
-    // -1 sentinel = no pending seek. atomic<double> isn't lock-free on every platform
-    // so we use int64 holding the double bits (still acceptable for a seek request).
-    std::atomic<int64_t> mPendingSeekBits { kNoSeek };
-    static constexpr int64_t kNoSeek = 0x7FFFFFFFFFFFFFFFLL;
+    // Seek protocol: a pending seek is signaled by mSeekPending=true; the actual
+    // target seconds live in mPendingSeekSec (mutex-guarded). Avoiding a 64-bit
+    // atomic here keeps the pump portable to PPC32 / GameCube / Wii — devkitPPC's
+    // gcc has no native 64-bit atomic ops and ships no libatomic, so an
+    // atomic<int64_t> link-fails with __atomic_store_8 / __atomic_exchange_8.
+    std::atomic<bool> mSeekPending { false };
 
     // Guarded by mMutex:
+    double mPendingSeekSec = 0.0;
     // Small FIFO of ready-to-present video frames. Worker pushes to the back; consumer
     // pops from the front when the frame's pts is due. ~4 frames at 30fps = ~133ms of
     // lookahead — enough to absorb decoder jitter without exceeding the pump's desired

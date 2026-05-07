@@ -29,10 +29,6 @@ function VideoQuadConnector:Start()
         Log.Error("VideoPlayer error: " .. tostring(message))
     end)
 
-    self.videoPlayer:ConnectSignal("OnLoop", self, function(s)
-        Log.Debug("VideoPlayer looped")
-    end)
-
 end
 
 function VideoQuadConnector:Tick(deltaTime)

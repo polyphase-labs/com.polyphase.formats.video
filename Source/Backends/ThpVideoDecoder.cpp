@@ -134,14 +134,34 @@ bool ThpVideoDecoder::OpenMemory(const uint8_t* data, size_t size, const char* /
 {
     Close();
 
-    if (data == nullptr || size < 0x40) return false;
-    if (!MagicIsThp(data)) return false;
+    if (data == nullptr || size < 0x40)
+    {
+        LogError("ThpVideoDecoder::OpenMemory: bad inputs (data=%p, size=%zu)", data, size);
+        return false;
+    }
+    if (!MagicIsThp(data))
+    {
+        LogError("ThpVideoDecoder::OpenMemory: magic mismatch (got %02X %02X %02X %02X, expected 54 48 50 00)",
+                 data[0], data[1], data[2], data[3]);
+        return false;
+    }
 
     mSrc = data;
     mSrcSize = size;
 
-    if (!ParseHeaderAndComponents()) { Close(); return false; }
-    if (!BuildFrameTable())          { Close(); return false; }
+    if (!ParseHeaderAndComponents())
+    {
+        LogError("ThpVideoDecoder::OpenMemory: ParseHeaderAndComponents failed (size=%zu)", size);
+        Close();
+        return false;
+    }
+    if (!BuildFrameTable())
+    {
+        LogError("ThpVideoDecoder::OpenMemory: BuildFrameTable failed (size=%zu, numFrames=%u)",
+                 size, mNumFrames);
+        Close();
+        return false;
+    }
 
     return true;
 }

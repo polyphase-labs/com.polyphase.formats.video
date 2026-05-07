@@ -260,7 +260,25 @@ void VideoPlayer3D::Tick(float deltaTime)
             if (samplesSinceBase > 0 || mAudioStarted)
             {
                 mAudioStarted = true;
-                mPlayheadSec  = mClockBaseSec + double(samplesSinceBase) / double(mAudioSampleRate);
+                const double audioClockSec =
+                    mClockBaseSec + double(samplesSinceBase) / double(mAudioSampleRate);
+                // At end-of-stream the samples-played counter saturates at slightly
+                // less than the full clip duration — the engine's tail residue and
+                // output ring leave the last few tens of ms unaccounted for in the
+                // counter even after the audio has audibly finished. If the loop
+                // trigger threshold (lastPts + 1/fps) sits inside that gap (more
+                // likely at low fps because finalFrameHold scales with 1/fps), the
+                // audio clock never crosses it and the loop never fires. Once EOS
+                // is set, switch to wall-clock so the playhead reliably advances
+                // past the threshold.
+                if (mPump->IsEndOfStream() && mPlayheadSec >= audioClockSec)
+                {
+                    mPlayheadSec += double(deltaTime) * double(mPlaybackSpeed);
+                }
+                else
+                {
+                    mPlayheadSec = audioClockSec;
+                }
                 usedAudioClock = true;
             }
             // else: hold the playhead at mClockBaseSec until audio actually starts outputting.

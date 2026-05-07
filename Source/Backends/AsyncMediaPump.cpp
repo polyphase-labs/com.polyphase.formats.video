@@ -31,7 +31,8 @@ bool AsyncMediaPump::Start(std::unique_ptr<IVideoDecoder> decoder)
     mMutex = SYS_CreateMutex();
     mError.store(false, std::memory_order_release);
     mEndOfStream.store(false, std::memory_order_release);
-    mPendingSeekBits.store(kNoSeek, std::memory_order_release);
+    mSeekPending.store(false, std::memory_order_release);
+    mPendingSeekSec = 0.0;
     mVideoQueue.clear();
     mAudioQueue.clear();
 
@@ -71,14 +72,17 @@ void AsyncMediaPump::Stop()
     mAudioQueue.clear();
     mError.store(false, std::memory_order_release);
     mEndOfStream.store(false, std::memory_order_release);
-    mPendingSeekBits.store(kNoSeek, std::memory_order_release);
+    mSeekPending.store(false, std::memory_order_release);
+    mPendingSeekSec = 0.0;
 }
 
 void AsyncMediaPump::RequestSeek(double seconds)
 {
-    int64_t bits;
-    std::memcpy(&bits, &seconds, sizeof(bits));
-    mPendingSeekBits.store(bits, std::memory_order_release);
+    {
+        SCOPED_LOCK(mMutex);
+        mPendingSeekSec = seconds;
+    }
+    mSeekPending.store(true, std::memory_order_release);
     // Clear EOS so the worker resumes decoding after the seek.
     mEndOfStream.store(false, std::memory_order_release);
 }
@@ -212,11 +216,13 @@ void AsyncMediaPump::WorkerLoop()
     while (mRunning.load(std::memory_order_acquire))
     {
         // Service a pending seek first so decoded frames after this point are post-seek.
-        const int64_t seekBits = mPendingSeekBits.exchange(kNoSeek, std::memory_order_acq_rel);
-        if (seekBits != kNoSeek)
+        if (mSeekPending.exchange(false, std::memory_order_acq_rel))
         {
             double seekSeconds = 0.0;
-            std::memcpy(&seekSeconds, &seekBits, sizeof(seekSeconds));
+            {
+                SCOPED_LOCK(mMutex);
+                seekSeconds = mPendingSeekSec;
+            }
             HandleSeek(seekSeconds);
         }
 
