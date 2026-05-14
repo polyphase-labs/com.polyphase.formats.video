@@ -17,12 +17,11 @@ end
 function VideoQuadConnector:Start()
  self.videoPlayer:ConnectSignal("OnReady", self, function(s)
         s.quadImage:SetTexture(s.videoPlayer:GetTexture())
-        Log.Debug(string.format("VideoPlayer ready: %.2fs duration", s.videoPlayer:GetDuration()))
         s.videoPlayer:Play()
     end)
 
     self.videoPlayer:ConnectSignal("OnFinished", self, function(s)
-        Log.Debug(string.format("VideoPlayer finished at %.2fs", s.videoPlayer:GetTime()))
+       local t = s;
     end)
 
     self.videoPlayer:ConnectSignal("OnError", self, function(s, message)
@@ -33,10 +32,4 @@ end
 
 function VideoQuadConnector:Tick(deltaTime)
 
-	if Input.IsKeyPressed(Key.Space) then
-		self.videoPlayer:Stop()
-	end
-	if Input.IsKeyPressed(Key.T) then
-	self.videoPlayer:Seek(1.0)
-	end
 end

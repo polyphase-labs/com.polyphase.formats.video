@@ -12,7 +12,12 @@
 
 #include "EngineAPIAccess.h"
 #include "Lua/VideoPlayer3D_Lua.h"
+#include "Lua/VideoPlayer_Lua.h"
+#include "Lua/VideoPlaylistPlayer_Lua.h"
 #include "Assets/VideoClip.h"
+#include "Nodes/VideoPlaylistPlayer.h"
+#include "Playlist/PlaylistRegistry.h"
+#include "Playlist/PlaylistEvents.h"
 
 #if EDITOR
 #include "AssetManager.h"
@@ -35,6 +40,7 @@ static int OnLoad(PolyphaseEngineAPI* api)
     // register the class with the AssetManager. Without this the optimiser may
     // discard the translation unit since nothing else references its symbols.
     FORCE_LINK_CALL(VideoClip);
+    FORCE_LINK_CALL(VideoPlaylistPlayer);
 
 #if EDITOR
     // Teach the editor's import dispatcher which extensions belong to VideoClip.
@@ -52,17 +58,23 @@ static int OnLoad(PolyphaseEngineAPI* api)
 
     if (api != nullptr && api->LogDebug != nullptr)
     {
-        api->LogDebug("VideoPlayer addon loaded");
     }
     return 0;
 }
 
 static void OnUnload()
 {
+    // Drop everything the addon owns BEFORE the DLL is freed:
+    //  - PlaylistRegistry holds AssetRefs; if those releases ran post-FreeLibrary
+    //    they'd dispatch through dangling vtables.
+    //  - PlaylistEventDispatcher holds Lua-ref-backed ScriptFuncs; releasing them
+    //    here keeps the Lua registry table tidy across hot-reloads.
+    VideoPlayerAddon::PlaylistRegistry::Get().Clear();
+    VideoPlayerAddon::PlaylistEventDispatcher::Get().Clear();
+
     PolyphaseEngineAPI* api = VideoPlayerAddon::GetEngineAPI();
     if (api != nullptr && api->LogDebug != nullptr)
     {
-        api->LogDebug("VideoPlayer addon unloaded");
     }
     VideoPlayerAddon::SetEngineAPI(nullptr);
 }
@@ -78,6 +90,8 @@ static void RegisterScriptFuncs(lua_State* /*L*/)
 {
 #if LUA_ENABLED
     VideoPlayer3D_Lua::Bind();
+    VideoPlaylistPlayer_Lua::Bind();
+    VideoPlayer_Lua::Bind();
 #endif
 }
 
