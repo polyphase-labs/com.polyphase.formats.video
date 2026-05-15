@@ -239,7 +239,7 @@ echo.
 if not exist "%BUILD_DIR%\Windows\x64\Release" mkdir "%BUILD_DIR%\Windows\x64\Release"
 pushd "%BUILD_DIR%\Windows\x64\Release"
 
-cl /nologo /EHsc /O2 /MD /LD ^
+cl /nologo /EHsc /std:c++17 /O2 /MD /LD ^
     !INCLUDE_FLAGS! ^
     !ENGINE_DEFINES! ^
     /Fe:"%ADDON_NAME%.dll" ^
@@ -302,7 +302,7 @@ echo.
 if not exist "%BUILD_DIR%\Windows\x64\Debug" mkdir "%BUILD_DIR%\Windows\x64\Debug"
 pushd "%BUILD_DIR%\Windows\x64\Debug"
 
-cl /nologo /EHsc /Od /MDd /LD /Zi ^
+cl /nologo /EHsc /std:c++17 /Od /MDd /LD /Zi ^
     !INCLUDE_FLAGS! ^
     !ENGINE_DEFINES! ^
     /Fe:"%ADDON_NAME%.dll" ^
